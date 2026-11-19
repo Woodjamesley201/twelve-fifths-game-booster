@@ -19,7 +19,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.twelvefifths.booster.ui.format.MetricDisplay
-import com.twelvefifths.booster.ui.format.PermissionKind
+import com.twelvefifths.booster.optimize.BoosterPermission
 import com.twelvefifths.booster.ui.graph.GraphRange
 import com.twelvefifths.booster.ui.theme.BoosterTypography
 import com.twelvefifths.booster.ui.theme.Charcoal
@@ -39,7 +39,7 @@ fun GraphPanel(
     series: List<GraphSeries>,
     range: GraphRange?,
     capacity: Int,
-    onGrant: (PermissionKind) -> Unit,
+    onGrant: (BoosterPermission?) -> Unit,
     modifier: Modifier = Modifier,
     accent: Color = Charcoal.NeonBlue,
     unsupportedReason: String? = null,

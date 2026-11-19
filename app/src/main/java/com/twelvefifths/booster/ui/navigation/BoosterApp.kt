@@ -42,7 +42,6 @@ import com.twelvefifths.booster.optimize.OptimizationSession
 import com.twelvefifths.booster.optimize.Optimizer
 import com.twelvefifths.booster.ui.components.BoosterChrome
 import com.twelvefifths.booster.ui.components.rememberMetricHistory
-import com.twelvefifths.booster.ui.format.PermissionKind
 import com.twelvefifths.booster.ui.screens.DashboardScreen
 import com.twelvefifths.booster.ui.screens.HudSettingsScreen
 import com.twelvefifths.booster.ui.screens.LibraryScreen
@@ -86,6 +85,7 @@ fun BoosterApp(
     val metricHistory = rememberMetricHistory(snapshot)
     val hudRunning by HudService.running.collectAsStateWithLifecycle()
     val overlayVisible by HudService.overlayVisible.collectAsStateWithLifecycle()
+    val overlayBounds by HudService.overlayBounds.collectAsStateWithLifecycle()
     val pingTarget by store.pingTarget.collectAsStateWithLifecycle(PingTarget.DEFAULT)
     val permissionChecker = remember(context) { PermissionChecker(context) }
 
@@ -123,14 +123,10 @@ fun BoosterApp(
         }
     }
 
-    fun requestPermission(kind: PermissionKind) = request(
-        when (kind) {
-            PermissionKind.OVERLAY -> BoosterPermission.OVERLAY
-            PermissionKind.USAGE_ACCESS -> BoosterPermission.USAGE_ACCESS
-            PermissionKind.DND -> BoosterPermission.DND_POLICY
-            PermissionKind.NOTIFICATIONS -> BoosterPermission.NOTIFICATIONS
-        },
-    )
+    /** Null = the engine didn't name a permission: show the Access tab instead of guessing. */
+    fun requestPermission(p: BoosterPermission?) {
+        if (p == null) destination = AppDestination.Permissions else request(p)
+    }
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -235,7 +231,7 @@ fun BoosterApp(
             )
             AppDestination.Library -> LibraryScreen(
                 games = games,
-                launchableApps = closable,
+                loadLaunchableApps = { gameLibrary.listLaunchableApps() },
                 closableApps = closable,
                 dndGranted = dndGranted,
                 activeSession = activeSession,
@@ -303,6 +299,7 @@ fun BoosterApp(
                 notificationsGranted = notificationsGranted,
                 hudRunning = hudRunning,
                 overlayVisible = overlayVisible,
+                overlayBounds = overlayBounds,
                 pingTarget = pingTarget.label,
                 onPrefsChange = { next ->
                     val base = loadedPrefs

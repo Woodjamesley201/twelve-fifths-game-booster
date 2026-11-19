@@ -14,7 +14,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.twelvefifths.booster.optimize.OptimizationProfile
-import com.twelvefifths.booster.ui.format.PermissionKind
+import com.twelvefifths.booster.optimize.BoosterPermission
 import com.twelvefifths.booster.ui.theme.BoosterTypography
 import com.twelvefifths.booster.ui.theme.Charcoal
 import com.twelvefifths.booster.ui.theme.PillButton
@@ -33,7 +33,7 @@ fun ProfileEditor(
     onChange: (OptimizationProfile) -> Unit,
     closableApps: List<Pair<String, String>>,
     dndGranted: Boolean,
-    onGrantPermission: (PermissionKind) -> Unit,
+    onGrantPermission: (BoosterPermission?) -> Unit,
     modifier: Modifier = Modifier,
     usageGranted: Boolean = true,
     canKillOtherApps: Boolean = true,
@@ -54,7 +54,7 @@ fun ProfileEditor(
             checked = profile.autoEndWhenGameLeaves,
             onCheckedChange = { onChange(profile.copy(autoEndWhenGameLeaves = it)) },
             trailingExtra = if (!usageGranted && profile.autoEndWhenGameLeaves) {
-                { PillButton("Grant permission", { onGrantPermission(PermissionKind.USAGE_ACCESS) }) }
+                { PillButton("Grant permission", { onGrantPermission(BoosterPermission.USAGE_ACCESS) }) }
             } else {
                 null
             },
@@ -67,7 +67,7 @@ fun ProfileEditor(
             enabled = dndGranted,
             onCheckedChange = { onChange(profile.copy(enableDoNotDisturb = it)) },
             trailingExtra = if (!dndGranted) {
-                { PillButton("Grant permission", { onGrantPermission(PermissionKind.DND) }) }
+                { PillButton("Grant permission", { onGrantPermission(BoosterPermission.DND_POLICY) }) }
             } else {
                 null
             },

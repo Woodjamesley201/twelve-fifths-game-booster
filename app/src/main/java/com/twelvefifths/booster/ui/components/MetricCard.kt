@@ -18,7 +18,7 @@ import com.twelvefifths.booster.metrics.MetricsSnapshot
 import com.twelvefifths.booster.ui.format.Metric
 import com.twelvefifths.booster.ui.format.MetricDisplay
 import com.twelvefifths.booster.ui.format.MetricFormat
-import com.twelvefifths.booster.ui.format.PermissionKind
+import com.twelvefifths.booster.optimize.BoosterPermission
 import com.twelvefifths.booster.ui.theme.BoosterTypography
 import com.twelvefifths.booster.ui.theme.Charcoal
 import com.twelvefifths.booster.ui.theme.GlassPanel
@@ -33,7 +33,7 @@ import com.twelvefifths.booster.ui.theme.GlassPanel
 fun MetricTile(
     metric: Metric,
     snapshot: MetricsSnapshot,
-    onGrant: (PermissionKind) -> Unit,
+    onGrant: (BoosterPermission?) -> Unit,
     modifier: Modifier = Modifier,
     accent: Color = Charcoal.NeonBlue,
     caption: String? = null,

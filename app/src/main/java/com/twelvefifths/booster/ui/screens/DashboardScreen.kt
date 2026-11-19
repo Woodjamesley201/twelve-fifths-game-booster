@@ -42,7 +42,7 @@ import com.twelvefifths.booster.ui.format.ComparisonRow
 import com.twelvefifths.booster.ui.format.Metric
 import com.twelvefifths.booster.ui.format.MetricDisplay
 import com.twelvefifths.booster.ui.format.MetricFormat
-import com.twelvefifths.booster.ui.format.PermissionKind
+import com.twelvefifths.booster.optimize.BoosterPermission
 import com.twelvefifths.booster.ui.format.SessionCompare
 import com.twelvefifths.booster.ui.graph.GraphMath
 import com.twelvefifths.booster.ui.graph.MetricHistory
@@ -71,7 +71,7 @@ fun DashboardScreen(
     onToggleHud: () -> Unit,
     onOpenHudSettings: () -> Unit,
     onOptimizeLast: () -> Unit,
-    onGrantPermission: (PermissionKind) -> Unit,
+    onGrantPermission: (BoosterPermission?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val nameOf: (String) -> String = { pkg -> games.firstOrNull { it.packageName == pkg }?.displayName ?: pkg }
@@ -168,7 +168,7 @@ fun DashboardScreen(
 private fun FpsCard(
     snapshot: MetricsSnapshot,
     history: MetricHistory,
-    onGrant: (PermissionKind) -> Unit,
+    onGrant: (BoosterPermission?) -> Unit,
     modifier: Modifier,
 ) {
     val display = MetricFormat.display(Metric.FPS, snapshot)
@@ -218,7 +218,7 @@ private fun FpsCard(
 private fun RamCard(
     snapshot: MetricsSnapshot,
     history: MetricHistory,
-    onGrant: (PermissionKind) -> Unit,
+    onGrant: (BoosterPermission?) -> Unit,
     modifier: Modifier,
 ) {
     val display = MetricFormat.display(Metric.RAM, snapshot)
@@ -257,7 +257,7 @@ private fun RamCard(
 private fun TemperatureGraph(
     snapshot: MetricsSnapshot,
     history: MetricHistory,
-    onGrant: (PermissionKind) -> Unit,
+    onGrant: (BoosterPermission?) -> Unit,
     modifier: Modifier,
 ) {
     val cpu = MetricFormat.display(Metric.CPU_TEMP, snapshot)
@@ -291,7 +291,7 @@ private fun TemperatureGraph(
 }
 
 @Composable
-private fun ThermalStatusTile(snapshot: MetricsSnapshot, onGrant: (PermissionKind) -> Unit, modifier: Modifier) {
+private fun ThermalStatusTile(snapshot: MetricsSnapshot, onGrant: (BoosterPermission?) -> Unit, modifier: Modifier) {
     val display = MetricFormat.thermalStatus(snapshot)
     GlassPanel(modifier, accent = Charcoal.NeonCyan) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
@@ -315,7 +315,7 @@ private fun SingleGraph(
     metric: Metric,
     snapshot: MetricsSnapshot,
     history: MetricHistory,
-    onGrant: (PermissionKind) -> Unit,
+    onGrant: (BoosterPermission?) -> Unit,
     modifier: Modifier,
     floor: Float? = null,
     ceiling: Float? = null,
@@ -413,9 +413,9 @@ private fun ComparisonLine(row: ComparisonRow) {
 
 @Composable
 private fun CompareCell(text: String, modifier: Modifier) {
-    val dim = text == MetricFormat.UNSUPPORTED_LABEL || text == MetricFormat.GRANT_LABEL || text == "Not captured"
+    val dim = text == MetricFormat.UNSUPPORTED_LABEL || text == MetricFormat.NEEDS_PERMISSION_LABEL || text == "Not captured"
     Text(
-        if (text == MetricFormat.GRANT_LABEL) "Permission missing" else text,
+        text,
         style = if (dim) BoosterTypography.labelSmall else BoosterTypography.labelLarge,
         color = if (dim) Charcoal.TextDim else Charcoal.Text,
         modifier = modifier,

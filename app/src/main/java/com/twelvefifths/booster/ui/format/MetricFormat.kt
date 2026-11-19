@@ -3,6 +3,11 @@ package com.twelvefifths.booster.ui.format
 import com.twelvefifths.booster.metrics.MetricSupport
 import com.twelvefifths.booster.metrics.MetricsSnapshot
 import com.twelvefifths.booster.metrics.PingStatus
+import com.twelvefifths.booster.hud.HudRows
+import com.twelvefifths.booster.metrics.MetricKey
+import com.twelvefifths.booster.metrics.requiredPermission
+import com.twelvefifths.booster.metrics.support
+import com.twelvefifths.booster.optimize.BoosterPermission
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToLong
@@ -18,16 +23,16 @@ import kotlin.math.roundToLong
  */
 
 /** Which metric a value belongs to. */
-enum class Metric(val title: String, val shortLabel: String) {
-    FPS("Game FPS", "FPS"),
-    CPU_TEMP("CPU temperature", "CPU °C"),
-    GPU_TEMP("GPU temperature", "GPU °C"),
-    RAM("Memory", "RAM"),
-    CPU_USAGE("CPU usage", "CPU %"),
-    GPU_USAGE("GPU usage", "GPU %"),
-    PING("Latency (TCP)", "PING TCP"),
-    VRAM("GPU memory", "VRAM"),
-    BATTERY_TEMP("Battery temperature", "BATT °C"),
+enum class Metric(val title: String, val shortLabel: String, val key: MetricKey) {
+    FPS("Game FPS", "FPS", MetricKey.FPS),
+    CPU_TEMP("CPU temperature", "CPU °C", MetricKey.CPU_TEMP),
+    GPU_TEMP("GPU temperature", "GPU °C", MetricKey.GPU_TEMP),
+    RAM("Memory", "RAM", MetricKey.RAM),
+    CPU_USAGE("CPU usage", "CPU %", MetricKey.CPU_USAGE),
+    GPU_USAGE("GPU usage", "GPU %", MetricKey.GPU_USAGE),
+    PING("Latency (TCP)", HudRows.PING_LABEL, MetricKey.PING),
+    VRAM("GPU memory", "VRAM", MetricKey.VRAM),
+    BATTERY_TEMP("Battery temperature", "BATT °C", MetricKey.BATTERY_TEMP),
     ;
 
     companion object {
@@ -36,8 +41,6 @@ enum class Metric(val title: String, val shortLabel: String) {
     }
 }
 
-/** Android permission flows the UI can route to. */
-enum class PermissionKind { OVERLAY, USAGE_ACCESS, DND, NOTIFICATIONS }
 
 /** What a metric cell should render. */
 sealed interface MetricDisplay {
@@ -46,7 +49,8 @@ sealed interface MetricDisplay {
     /** Supported, but no sample has arrived yet. Shows a dash, never a number. */
     data object Waiting : MetricDisplay
 
-    data class NeedsPermission(val permission: PermissionKind) : MetricDisplay
+    /** [permission] is null when the engine did not name one: route to the Access tab. */
+    data class NeedsPermission(val permission: BoosterPermission?) : MetricDisplay
 
     data object Unsupported : MetricDisplay
 
@@ -55,9 +59,13 @@ sealed interface MetricDisplay {
 }
 
 object MetricFormat {
-    const val UNSUPPORTED_LABEL = "Not available on Android"
+    // State wording is shared with the live overlay (hud/HudRows) so both match.
+    const val UNSUPPORTED_LABEL = HudRows.UNSUPPORTED_TEXT
+    const val NEEDS_PERMISSION_LABEL = HudRows.NEEDS_PERMISSION_TEXT
+    const val WAITING_LABEL = HudRows.WAITING_TEXT
+
+    /** Button text on a NEEDS_PERMISSION metric. */
     const val GRANT_LABEL = "Grant permission"
-    const val WAITING_LABEL = "—"
 
     /** Short explanation of *why* a metric is unsupported, shown as a caption. */
     fun unsupportedReason(metric: Metric): String = when (metric) {
@@ -71,18 +79,15 @@ object MetricFormat {
         Metric.BATTERY_TEMP -> "Battery temperature is not reported."
     }
 
-    /**
-     * The permission a NEEDS_PERMISSION metric routes to. MetricSupport does
-     * not carry which permission, so this is the UI's best mapping; usage
-     * access is the only metric-gating permission the app declares today.
-     */
-    fun permissionFor(metric: Metric): PermissionKind = when (metric) {
-        else -> PermissionKind.USAGE_ACCESS
-    }
-
-    fun display(metric: Metric, value: String?, support: MetricSupport, status: String? = null): MetricDisplay = when (support) {
+    fun display(
+        metric: Metric,
+        value: String?,
+        support: MetricSupport,
+        status: String? = null,
+        permission: BoosterPermission? = null,
+    ): MetricDisplay = when (support) {
         MetricSupport.UNSUPPORTED -> MetricDisplay.Unsupported
-        MetricSupport.NEEDS_PERMISSION -> MetricDisplay.NeedsPermission(permissionFor(metric))
+        MetricSupport.NEEDS_PERMISSION -> MetricDisplay.NeedsPermission(permission)
         MetricSupport.SUPPORTED -> when {
             value != null -> MetricDisplay.Value(value)
             status != null -> MetricDisplay.Status(status)
@@ -94,7 +99,7 @@ object MetricFormat {
     fun text(display: MetricDisplay): String = when (display) {
         is MetricDisplay.Value -> display.text
         MetricDisplay.Waiting -> WAITING_LABEL
-        is MetricDisplay.NeedsPermission -> GRANT_LABEL
+        is MetricDisplay.NeedsPermission -> NEEDS_PERMISSION_LABEL
         MetricDisplay.Unsupported -> UNSUPPORTED_LABEL
         is MetricDisplay.Status -> display.text
     }
@@ -111,17 +116,7 @@ object MetricFormat {
         else -> MetricDisplay.Unsupported
     }
 
-    fun support(metric: Metric, s: MetricsSnapshot): MetricSupport = when (metric) {
-        Metric.FPS -> s.fpsSupport
-        Metric.CPU_TEMP -> s.cpuTempSupport
-        Metric.GPU_TEMP -> s.gpuTempSupport
-        Metric.RAM -> s.ramSupport
-        Metric.CPU_USAGE -> s.cpuUsageSupport
-        Metric.GPU_USAGE -> s.gpuUsageSupport
-        Metric.PING -> s.pingSupport
-        Metric.VRAM -> s.vramSupport
-        Metric.BATTERY_TEMP -> s.batteryTempSupport
-    }
+    fun support(metric: Metric, s: MetricsSnapshot): MetricSupport = s.support(metric.key)
 
     /** Raw numeric value, only when SUPPORTED. RAM is percent used. */
     fun numeric(metric: Metric, s: MetricsSnapshot): Float? {
@@ -155,7 +150,7 @@ object MetricFormat {
     }
 
     fun display(metric: Metric, s: MetricsSnapshot): MetricDisplay =
-        display(metric, valueText(metric, s), support(metric, s), statusText(metric, s))
+        display(metric, valueText(metric, s), support(metric, s), statusText(metric, s), s.requiredPermission(metric.key))
 
     /** Non-numeric state for a SUPPORTED metric with no value (ping only today). */
     fun statusText(metric: Metric, s: MetricsSnapshot): String? = when (metric) {
@@ -188,7 +183,7 @@ object MetricFormat {
     /** Thermal status is a throttling level, never degrees. */
     fun thermalStatus(s: MetricsSnapshot): MetricDisplay {
         if (s.thermalStatusSupport != MetricSupport.SUPPORTED) {
-            return display(Metric.CPU_TEMP, null, s.thermalStatusSupport)
+            return display(Metric.CPU_TEMP, null, s.thermalStatusSupport, permission = s.requiredPermission(MetricKey.THERMAL_STATUS))
         }
         val level = s.thermalStatus ?: return MetricDisplay.Waiting
         return MetricDisplay.Value(level.name.lowercase(Locale.US).replaceFirstChar { it.uppercase(Locale.US) })
@@ -207,8 +202,8 @@ object MetricFormat {
 
     fun percent(v: Float): String = String.format(Locale.US, "%.0f%%", v)
 
-    /** Always labeled TCP: apps cannot send ICMP, this is a timed TCP connect. */
-    fun pingTcp(ms: Long): String = "$ms ms TCP"
+    /** Value only; the label (HudRows.PING_LABEL / "Latency (TCP)") says it is a TCP connect, not ICMP. */
+    fun pingTcp(ms: Long): String = "$ms ms"
 
     fun bytes(bytes: Long): String {
         val mb = bytes / (1024.0 * 1024.0)

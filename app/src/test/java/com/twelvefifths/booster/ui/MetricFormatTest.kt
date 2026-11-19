@@ -1,11 +1,13 @@
 package com.twelvefifths.booster.ui
 
+import com.twelvefifths.booster.hud.HudRows
+import com.twelvefifths.booster.metrics.MetricKey
 import com.twelvefifths.booster.metrics.MetricSupport
 import com.twelvefifths.booster.metrics.MetricsSnapshot
 import com.twelvefifths.booster.ui.format.Metric
 import com.twelvefifths.booster.ui.format.MetricDisplay
 import com.twelvefifths.booster.ui.format.MetricFormat
-import com.twelvefifths.booster.ui.format.PermissionKind
+import com.twelvefifths.booster.optimize.BoosterPermission
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -24,13 +26,30 @@ class MetricFormatTest {
     }
 
     @Test
-    fun needsPermissionRoutesToGrant() {
-        val s = MetricsSnapshot.empty().copy(cpuUsage = 40f, cpuUsageSupport = MetricSupport.NEEDS_PERMISSION)
+    fun needsPermissionUsesTheEngineNamedPermission() {
+        val s = MetricsSnapshot.empty().copy(
+            cpuUsage = 40f,
+            cpuUsageSupport = MetricSupport.NEEDS_PERMISSION,
+            requiredPermissions = mapOf(MetricKey.CPU_USAGE to BoosterPermission.USAGE_ACCESS),
+        )
         val d = MetricFormat.display(Metric.CPU_USAGE, s)
-        assertTrue(d is MetricDisplay.NeedsPermission)
-        assertEquals(PermissionKind.USAGE_ACCESS, (d as MetricDisplay.NeedsPermission).permission)
-        assertEquals("Grant permission", MetricFormat.text(d))
+        assertEquals(MetricDisplay.NeedsPermission(BoosterPermission.USAGE_ACCESS), d)
+        assertEquals(HudRows.NEEDS_PERMISSION_TEXT, MetricFormat.text(d))
         assertNull(MetricFormat.numeric(Metric.CPU_USAGE, s))
+    }
+
+    @Test
+    fun needsPermissionWithoutANamedPermissionDoesNotGuess() {
+        val s = MetricsSnapshot.empty().copy(gpuUsageSupport = MetricSupport.NEEDS_PERMISSION)
+        assertEquals(MetricDisplay.NeedsPermission(null), MetricFormat.display(Metric.GPU_USAGE, s))
+    }
+
+    @Test
+    fun stateWordingMatchesTheOverlay() {
+        assertEquals(HudRows.UNSUPPORTED_TEXT, MetricFormat.UNSUPPORTED_LABEL)
+        assertEquals(HudRows.NEEDS_PERMISSION_TEXT, MetricFormat.NEEDS_PERMISSION_LABEL)
+        assertEquals(HudRows.WAITING_TEXT, MetricFormat.WAITING_LABEL)
+        assertEquals(HudRows.PING_LABEL, Metric.PING.shortLabel)
     }
 
     @Test
@@ -54,7 +73,7 @@ class MetricFormatTest {
         )
         assertEquals(MetricDisplay.Value("2.0 GB / 4.0 GB"), MetricFormat.display(Metric.RAM, s))
         assertEquals(50f, MetricFormat.numeric(Metric.RAM, s)!!, 0.01f)
-        assertEquals("23 ms TCP", MetricFormat.valueText(Metric.PING, s))
+        assertEquals("23 ms", MetricFormat.valueText(Metric.PING, s))
         assertEquals("42 °C", MetricFormat.valueText(Metric.CPU_TEMP, s))
     }
 

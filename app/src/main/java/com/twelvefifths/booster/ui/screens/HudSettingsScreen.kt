@@ -49,6 +49,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import com.twelvefifths.booster.data.HudPreferences
+import com.twelvefifths.booster.hud.HudWindowBounds
 import com.twelvefifths.booster.metrics.MetricsSnapshot
 import com.twelvefifths.booster.ui.components.LabeledSlider
 import com.twelvefifths.booster.ui.components.ScreenTitle
@@ -58,7 +59,7 @@ import com.twelvefifths.booster.ui.components.SupportPill
 import com.twelvefifths.booster.ui.components.ToggleRow
 import com.twelvefifths.booster.ui.format.Metric
 import com.twelvefifths.booster.ui.format.MetricFormat
-import com.twelvefifths.booster.ui.format.PermissionKind
+import com.twelvefifths.booster.optimize.BoosterPermission
 import com.twelvefifths.booster.ui.graph.MetricHistory
 import com.twelvefifths.booster.ui.hud.HudOverlay
 import com.twelvefifths.booster.ui.hud.HudPrefsEdit
@@ -85,13 +86,14 @@ fun HudSettingsScreen(
     notificationsGranted: Boolean,
     hudRunning: Boolean,
     overlayVisible: Boolean,
+    overlayBounds: HudWindowBounds?,
     pingTarget: String,
     onPrefsChange: (HudPreferences) -> Unit,
     onToggleHud: () -> Unit,
     onShowOverlay: () -> Unit,
     onSetPingTarget: suspend (String) -> Boolean,
     onResetPingTarget: () -> Unit,
-    onGrantPermission: (PermissionKind) -> Unit,
+    onGrantPermission: (BoosterPermission?) -> Unit,
     modifier: Modifier = Modifier,
 ) {
     var draft by remember(prefs) { mutableStateOf(prefs) }
@@ -106,7 +108,7 @@ fun HudSettingsScreen(
         val controls: @Composable (Modifier) -> Unit = { m ->
             Column(m, verticalArrangement = Arrangement.spacedBy(14.dp)) {
                 RunCard(hudRunning, overlayVisible, overlayGranted, notificationsGranted, onToggleHud, onShowOverlay, onGrantPermission)
-                LayoutCard(draft, onDraft = { draft = it }, onCommit = { commit(it) })
+                LayoutCard(draft, overlayBounds, onDraft = { draft = it }, onCommit = { commit(it) })
                 StatsCard(draft, snapshot, onCommit = { commit(it) })
                 PingTargetCard(pingTarget, snapshot, onSetPingTarget, onResetPingTarget)
             }
@@ -232,7 +234,7 @@ private fun RunCard(
     notificationsGranted: Boolean,
     onToggleHud: () -> Unit,
     onShowOverlay: () -> Unit,
-    onGrantPermission: (PermissionKind) -> Unit,
+    onGrantPermission: (BoosterPermission?) -> Unit,
 ) {
     GlassPanel(accent = if (hudRunning) Charcoal.Ok else Charcoal.NeonBlue) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
@@ -248,7 +250,7 @@ private fun RunCard(
                 enabled = overlayGranted || hudRunning,
                 onCheckedChange = { onToggleHud() },
                 trailingExtra = if (!overlayGranted) {
-                    { PillButton("Grant permission", { onGrantPermission(PermissionKind.OVERLAY) }) }
+                    { PillButton("Grant permission", { onGrantPermission(BoosterPermission.OVERLAY) }) }
                 } else {
                     null
                 },
@@ -263,7 +265,7 @@ private fun RunCard(
                         style = BoosterTypography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
-                    PillButton("Grant permission", { onGrantPermission(PermissionKind.NOTIFICATIONS) })
+                    PillButton("Grant permission", { onGrantPermission(BoosterPermission.NOTIFICATIONS) })
                 }
             }
             Text(
@@ -277,7 +279,7 @@ private fun RunCard(
 }
 
 @Composable
-private fun LayoutCard(draft: HudPreferences, onDraft: (HudPreferences) -> Unit, onCommit: (HudPreferences) -> Unit) {
+private fun LayoutCard(draft: HudPreferences, bounds: HudWindowBounds?, onDraft: (HudPreferences) -> Unit, onCommit: (HudPreferences) -> Unit) {
     val config = LocalConfiguration.current
     val density = LocalDensity.current
     GlassPanel {
@@ -328,21 +330,24 @@ private fun LayoutCard(draft: HudPreferences, onDraft: (HudPreferences) -> Unit,
             val rowsShown = HudPrefsEdit.enabled(draft).size.let { if (draft.compact) minOf(it, HudPrefsEdit.COMPACT_MAX_ROWS) else it }
             val hudH = with(density) { (36 + rowsShown * 20 + if (draft.compact) 0 else 36).dp.roundToPx() }
             val margin = with(density) { 16.dp.roundToPx() }
-            val currentCorner = corners.firstOrNull { (c, _) ->
-                HudPrefsEdit.cornerPosition(c, screenW, screenH, hudW, hudH, margin) == (draft.posX to draft.posY)
-            }?.first
+            // Exact when the overlay is on screen (measured size + clamped screen), estimate otherwise.
+            val place: (HudPrefsEdit.Corner) -> Pair<Int, Int> = { c ->
+                HudPrefsEdit.cornerPosition(c, bounds, { HudPrefsEdit.cornerPosition(c, screenW, screenH, hudW, hudH, margin) }, margin)
+            }
+            val currentCorner = corners.firstOrNull { (c, _) -> place(c) == (draft.posX to draft.posY) }?.first
             corners.chunked(2).forEach { pair ->
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     pair.forEach { (corner, label) ->
                         ChoiceChip(label, currentCorner == corner, {
-                            val (x, y) = HudPrefsEdit.cornerPosition(corner, screenW, screenH, hudW, hudH, margin)
+                            val (x, y) = place(corner)
                             onCommit(draft.copy(posX = x, posY = y))
                         }, Modifier.weight(1f))
                     }
                 }
             }
             Text(
-                "Presets move the live HUD too. Drag the overlay to fine-tune, or its ◢ corner to resize.",
+                if (bounds != null) "Presets use the live HUD's measured size and move it now. Drag to fine-tune, or its ◢ corner to resize."
+                else "HUD is off, so bottom/right presets use an estimated size. Start it for exact placement.",
                 style = BoosterTypography.bodyMedium,
                 color = Charcoal.TextDim,
             )

@@ -27,7 +27,7 @@ import com.twelvefifths.booster.metrics.MetricSupport
 import com.twelvefifths.booster.ui.format.Metric
 import com.twelvefifths.booster.ui.format.MetricDisplay
 import com.twelvefifths.booster.ui.format.MetricFormat
-import com.twelvefifths.booster.ui.format.PermissionKind
+import com.twelvefifths.booster.optimize.BoosterPermission
 import com.twelvefifths.booster.ui.theme.BoosterTypography
 import com.twelvefifths.booster.ui.theme.Charcoal
 import com.twelvefifths.booster.ui.theme.PillButton
@@ -42,7 +42,7 @@ import com.twelvefifths.booster.ui.theme.PillButton
 @Composable
 fun MetricValue(
     display: MetricDisplay,
-    onGrant: (PermissionKind) -> Unit,
+    onGrant: (BoosterPermission?) -> Unit,
     modifier: Modifier = Modifier,
     valueStyle: TextStyle = BoosterTypography.headlineSmall,
     valueColor: Color = Charcoal.Text,
@@ -65,7 +65,8 @@ fun MetricValue(
             MetricDisplay.Waiting -> Text(MetricFormat.WAITING_LABEL, style = valueStyle, color = Charcoal.TextDim)
             is MetricDisplay.Status -> Text(d.text, style = BoosterTypography.titleMedium, color = Charcoal.Warn)
             is MetricDisplay.NeedsPermission -> PillButton(
-                text = MetricFormat.GRANT_LABEL,
+                // Named permission -> its Settings screen; unnamed -> Access tab (no guessing).
+                text = if (d.permission != null) MetricFormat.GRANT_LABEL else MetricFormat.NEEDS_PERMISSION_LABEL,
                 onClick = { onGrant(d.permission) },
                 icon = Icons.Outlined.Lock,
             )
@@ -85,7 +86,7 @@ fun SupportLabel(
     valueText: String?,
     modifier: Modifier = Modifier,
     metric: Metric = Metric.RAM,
-    onGrant: (PermissionKind) -> Unit = {},
+    onGrant: (BoosterPermission?) -> Unit = {},
 ) {
     MetricValue(MetricFormat.display(metric, valueText, support), onGrant, modifier, BoosterTypography.titleMedium)
 }

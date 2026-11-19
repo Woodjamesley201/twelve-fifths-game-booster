@@ -48,6 +48,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.twelvefifths.booster.optimize.GameEntry
+import com.twelvefifths.booster.optimize.LaunchableApp
+import com.twelvefifths.booster.ui.format.AddGamePicker
 import com.twelvefifths.booster.optimize.OptimizationProfile
 import com.twelvefifths.booster.optimize.OptimizationSession
 import com.twelvefifths.booster.ui.components.AppIcon
@@ -56,7 +58,7 @@ import com.twelvefifths.booster.ui.components.ProfileEditor
 import com.twelvefifths.booster.ui.components.ScreenTitle
 import com.twelvefifths.booster.ui.components.StatusPill
 import com.twelvefifths.booster.ui.format.MetricFormat
-import com.twelvefifths.booster.ui.format.PermissionKind
+import com.twelvefifths.booster.optimize.BoosterPermission
 import com.twelvefifths.booster.ui.theme.BoosterTypography
 import com.twelvefifths.booster.ui.theme.Charcoal
 import com.twelvefifths.booster.ui.theme.GlassPanel
@@ -73,7 +75,7 @@ import kotlinx.coroutines.launch
 @Composable
 fun LibraryScreen(
     games: List<GameEntry>,
-    launchableApps: List<Pair<String, String>>,
+    loadLaunchableApps: suspend () -> List<LaunchableApp>,
     closableApps: List<Pair<String, String>>,
     dndGranted: Boolean,
     activeSession: OptimizationSession?,
@@ -84,7 +86,7 @@ fun LibraryScreen(
     onBoost: (GameEntry) -> Unit,
     loadProfile: suspend (String) -> OptimizationProfile,
     onSaveProfile: (OptimizationProfile) -> Unit,
-    onGrantPermission: (PermissionKind) -> Unit,
+    onGrantPermission: (BoosterPermission?) -> Unit,
     modifier: Modifier = Modifier,
     usageGranted: Boolean = true,
     canKillOtherApps: Boolean = true,
@@ -174,7 +176,8 @@ fun LibraryScreen(
 
     if (showAdd) {
         AddGameDialog(
-            apps = launchableApps.filter { (pkg, _) -> games.none { it.packageName == pkg } },
+            load = loadLaunchableApps,
+            excluded = games.map { it.packageName }.toSet(),
             onAdd = { pkg, label ->
                 onAddManual(pkg, label)
                 showAdd = false
@@ -243,14 +246,18 @@ private fun GameCard(
 
 @Composable
 private fun AddGameDialog(
-    apps: List<Pair<String, String>>,
+    load: suspend () -> List<LaunchableApp>,
+    excluded: Set<String>,
     onAdd: (String, String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     var query by remember { mutableStateOf("") }
-    val filtered = remember(apps, query) {
-        val q = query.trim().lowercase()
-        if (q.isEmpty()) apps else apps.filter { (pkg, label) -> label.lowercase().contains(q) || pkg.lowercase().contains(q) }
+    var showSystem by remember { mutableStateOf(false) }
+    // listLaunchableApps runs on Dispatchers.IO inside the engine.
+    var apps by remember { mutableStateOf<List<LaunchableApp>?>(null) }
+    LaunchedEffect(Unit) { apps = load() }
+    val filtered = remember(apps, query, showSystem, excluded) {
+        AddGamePicker.filter(apps.orEmpty(), query, showSystem, excluded)
     }
     GlassDialog(
         title = "Add a game",
@@ -258,7 +265,7 @@ private fun AddGameDialog(
         actions = { SecondaryButton("Close", onDismiss) },
     ) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            Text("Pick any installed app you can launch.", style = BoosterTypography.bodyMedium)
+            Text("Pick any installed app you can launch. Games are listed first.", style = BoosterTypography.bodyMedium)
             OutlinedTextField(
                 value = query,
                 onValueChange = { query = it },
@@ -272,11 +279,22 @@ private fun AddGameDialog(
                     cursorColor = Charcoal.NeonBlue,
                 ),
             )
-            if (filtered.isEmpty()) {
+            com.twelvefifths.booster.ui.components.ToggleRow(
+                title = "Show system apps",
+                checked = showSystem,
+                onCheckedChange = { showSystem = it },
+            )
+            if (apps == null) {
+                Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.Center) {
+                    CircularProgressIndicator(color = Charcoal.NeonBlue)
+                }
+            } else if (filtered.isEmpty()) {
                 Text("No matching apps.", style = BoosterTypography.bodyMedium, modifier = Modifier.padding(8.dp))
             }
             LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp)) {
-                items(filtered, key = { it.first }) { (pkg, label) ->
+                items(filtered, key = { it.packageName }) { app ->
+                    val pkg = app.packageName
+                    val label = app.label
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -290,6 +308,8 @@ private fun AddGameDialog(
                             Text(label, style = BoosterTypography.bodyLarge, maxLines = 1)
                             Text(pkg, style = BoosterTypography.bodyMedium, color = Charcoal.TextDim, maxLines = 1)
                         }
+                        if (app.isGame) StatusPill("Game", Charcoal.NeonBlue)
+                        if (app.isSystem) StatusPill("System", Charcoal.TextDim)
                         Icon(Icons.Outlined.Add, contentDescription = "Add $label", tint = Charcoal.NeonBlue)
                     }
                 }
@@ -305,7 +325,7 @@ private fun ProfileDialog(
     dndGranted: Boolean,
     loadProfile: suspend (String) -> OptimizationProfile,
     onSave: (OptimizationProfile) -> Unit,
-    onGrantPermission: (PermissionKind) -> Unit,
+    onGrantPermission: (BoosterPermission?) -> Unit,
     onDismiss: () -> Unit,
     usageGranted: Boolean,
     canKillOtherApps: Boolean,

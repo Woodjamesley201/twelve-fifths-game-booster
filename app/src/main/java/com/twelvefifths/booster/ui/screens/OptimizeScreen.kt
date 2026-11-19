@@ -70,7 +70,7 @@ import com.twelvefifths.booster.ui.components.StatusPill
 import com.twelvefifths.booster.ui.format.Metric
 import com.twelvefifths.booster.ui.format.MetricFormat
 import com.twelvefifths.booster.ui.format.OptimizePlan
-import com.twelvefifths.booster.ui.format.PermissionKind
+import com.twelvefifths.booster.optimize.BoosterPermission
 import com.twelvefifths.booster.ui.format.SessionCompare
 import com.twelvefifths.booster.ui.theme.BoosterTypography
 import com.twelvefifths.booster.ui.theme.Charcoal
@@ -111,7 +111,7 @@ fun OptimizeScreen(
     onOptimize: suspend (GameEntry) -> Result<OptimizationSession>,
     onRestore: suspend () -> Result<OptimizationSession>,
     onLaunch: (GameEntry) -> Boolean,
-    onGrantPermission: (PermissionKind) -> Unit,
+    onGrantPermission: (BoosterPermission?) -> Unit,
     modifier: Modifier = Modifier,
     canKillOtherApps: Boolean = true,
     shortcuts: List<SettingsShortcut> = emptyList(),
@@ -176,7 +176,7 @@ fun OptimizeScreen(
                         val fg = foregroundPackage?.let(labelOf)
                         StatusPill(fg?.let { "Foreground: $it" } ?: "Foreground: unknown", Charcoal.NeonCyan)
                     } else {
-                        PillButton("Grant usage access", { onGrantPermission(PermissionKind.USAGE_ACCESS) })
+                        PillButton("Grant usage access", { onGrantPermission(BoosterPermission.USAGE_ACCESS) })
                     }
                 },
             )

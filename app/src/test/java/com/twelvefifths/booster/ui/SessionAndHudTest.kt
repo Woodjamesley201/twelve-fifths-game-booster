@@ -65,16 +65,54 @@ class SessionAndHudTest {
         assertEquals(8, rows.size)
         assertTrue(rows.all { HudPrefsEdit.previewValue(it) == MetricFormat.UNSUPPORTED_LABEL })
         val ping = rows.single { it.key == com.twelvefifths.booster.hud.HudRow.Key.PING }
-        assertEquals("PING TCP", HudPrefsEdit.previewLabel(ping))
+        assertEquals(HudRows.PING_LABEL, HudPrefsEdit.previewLabel(ping))
         // Compact keeps only live values, so an all-unsupported snapshot shows nothing.
         assertTrue(HudRows.build(MetricsSnapshot.empty(), prefs.copy(compact = true)).isEmpty())
     }
 
     @Test
-    fun previewPingValueIsLabelledTcp() {
+    fun previewPingMatchesOverlay() {
         val s = MetricsSnapshot.empty().copy(pingMs = 31, pingSupport = MetricSupport.SUPPORTED)
         val ping = HudRows.build(s, HudPreferences(compact = true)).single()
-        assertEquals("31 ms TCP", HudPrefsEdit.previewValue(ping))
+        assertEquals("TCP ping", HudPrefsEdit.previewLabel(ping))
+        assertEquals("31 ms", HudPrefsEdit.previewValue(ping))
+    }
+
+    @Test
+    fun cornerPresetUsesMeasuredBoundsWhenOverlayIsShown() {
+        val bounds = com.twelvefifths.booster.hud.HudWindowBounds(
+            x = 10, y = 10, widthPx = 330, heightPx = 142, screenWidthPx = 1340, screenHeightPx = 800, density = 1.5f,
+        )
+        val exact = HudPrefsEdit.cornerPosition(HudPrefsEdit.Corner.BOTTOM_END, bounds, { error("no fallback") }, 24)
+        assertEquals(1340 - 330 - 24 to 800 - 142 - 24, exact)
+        val estimated = HudPrefsEdit.cornerPosition(HudPrefsEdit.Corner.BOTTOM_END, null, { 1 to 2 }, 24)
+        assertEquals(1 to 2, estimated)
+    }
+
+    @Test
+    fun addGamePickerListsGamesFirstAndHidesSystemApps() {
+        val apps = listOf(
+            com.twelvefifths.booster.optimize.LaunchableApp("com.a.notes", "Notes", isGame = false, isSystem = false),
+            com.twelvefifths.booster.optimize.LaunchableApp("com.sys.clock", "Clock", isGame = false, isSystem = true),
+            com.twelvefifths.booster.optimize.LaunchableApp("com.sys.game", "Solitaire", isGame = true, isSystem = true),
+            com.twelvefifths.booster.optimize.LaunchableApp("com.z.racer", "Racer", isGame = true, isSystem = false),
+            com.twelvefifths.booster.optimize.LaunchableApp("com.in.lib", "Already", isGame = true, isSystem = false),
+        )
+        val shown = com.twelvefifths.booster.ui.format.AddGamePicker.filter(apps, "", showSystem = false, excluded = setOf("com.in.lib"))
+        assertEquals(listOf("Racer", "Solitaire", "Notes"), shown.map { it.label })
+        val all = com.twelvefifths.booster.ui.format.AddGamePicker.filter(apps, "clo", showSystem = true, excluded = emptySet())
+        assertEquals(listOf("Clock"), all.map { it.label })
+    }
+
+    @Test
+    fun previewNeedsPermissionCarriesEngineRouting() {
+        val s = MetricsSnapshot.empty().copy(
+            fpsSupport = MetricSupport.NEEDS_PERMISSION,
+            requiredPermissions = mapOf(com.twelvefifths.booster.metrics.MetricKey.FPS to com.twelvefifths.booster.optimize.BoosterPermission.USAGE_ACCESS),
+        )
+        val fps = HudRows.build(s, HudPreferences(compact = false)).first()
+        assertEquals(HudRows.NEEDS_PERMISSION_TEXT, HudPrefsEdit.previewValue(fps))
+        assertEquals(com.twelvefifths.booster.optimize.BoosterPermission.USAGE_ACCESS, fps.requiredPermission)
     }
 
     @Test

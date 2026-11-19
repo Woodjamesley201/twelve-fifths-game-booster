@@ -3,9 +3,8 @@ package com.twelvefifths.booster.ui.hud
 import com.twelvefifths.booster.data.HudPreferences
 import com.twelvefifths.booster.hud.HudRow
 import com.twelvefifths.booster.hud.HudRows
-import com.twelvefifths.booster.metrics.MetricSupport
+import com.twelvefifths.booster.hud.HudWindowBounds
 import com.twelvefifths.booster.ui.format.Metric
-import com.twelvefifths.booster.ui.format.MetricFormat
 
 /**
  * Pure helpers for HUD settings: stat toggles, accent swatches, corner presets,
@@ -49,19 +48,11 @@ object HudPrefsEdit {
         else -> metric.title
     }
 
-    /** Label shown in the in-app preview. Ping is always labelled TCP. */
-    fun previewLabel(row: HudRow): String = when (row.key) {
-        HudRow.Key.PING -> "PING TCP"
-        else -> row.label
-    }
+    /** Label shown in the in-app preview: identical to the overlay (ping = HudRows.PING_LABEL). */
+    fun previewLabel(row: HudRow): String = row.label
 
-    /** Value text for the preview: the real value, else the honest support label. */
-    fun previewValue(row: HudRow): String = when {
-        row.hasRealValue -> row.value!!.let { if (row.key == HudRow.Key.PING) "$it TCP" else it }
-        row.support == MetricSupport.UNSUPPORTED -> MetricFormat.UNSUPPORTED_LABEL
-        row.support == MetricSupport.NEEDS_PERMISSION -> MetricFormat.GRANT_LABEL
-        else -> row.statusText
-    }
+    /** Value text for the preview: identical to the overlay's text. */
+    fun previewValue(row: HudRow): String = row.display
 
     /** Accent swatches offered in HUD settings (ARGB). */
     val accentSwatches: List<Int> = listOf(
@@ -75,6 +66,15 @@ object HudPrefsEdit {
     )
 
     enum class Corner { TOP_START, TOP_END, BOTTOM_START, BOTTOM_END }
+
+    /**
+     * Exact corner position from the live overlay's measured bounds
+     * (HudService.overlayBounds); falls back to [cornerPosition] with an
+     * estimated size when the overlay is not on screen.
+     */
+    fun cornerPosition(corner: Corner, bounds: HudWindowBounds?, fallback: () -> Pair<Int, Int>, marginPx: Int): Pair<Int, Int> =
+        if (bounds == null) fallback()
+        else cornerPosition(corner, bounds.screenWidthPx, bounds.screenHeightPx, bounds.widthPx, bounds.heightPx, marginPx)
 
     /** Overlay x/y (px from top-start) for a corner preset. Moves the live window too. */
     fun cornerPosition(
