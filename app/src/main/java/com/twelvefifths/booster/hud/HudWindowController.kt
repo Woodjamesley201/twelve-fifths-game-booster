@@ -19,11 +19,36 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import com.twelvefifths.booster.data.HudPreferences
 import com.twelvefifths.booster.metrics.MetricsSnapshot
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /** Geometry the user set by dragging / resizing. Persisted by [HudService]. */
 data class HudGeometry(val x: Int, val y: Int, val widthDp: Int)
+
+/**
+ * Where the overlay window is and how big it really is, in pixels, in the same
+ * coordinate space as [HudPreferences.posX] / [HudPreferences.posY] (top-left
+ * gravity, full display). [screenWidthPx] / [screenHeightPx] are the bounds the
+ * controller clamps to, so a bottom-right preset is
+ * `posX = screenWidthPx - widthPx - margin`, `posY = screenHeightPx - heightPx - margin`.
+ * [heightPx] is the measured height after layout (it changes with compact /
+ * expanded mode, enabled rows and width-scaled text).
+ */
+data class HudWindowBounds(
+    val x: Int,
+    val y: Int,
+    val widthPx: Int,
+    val heightPx: Int,
+    val screenWidthPx: Int,
+    val screenHeightPx: Int,
+    val density: Float,
+) {
+    val widthDp: Int get() = (widthPx / density).roundToInt()
+    val heightDp: Int get() = (heightPx / density).roundToInt()
+}
 
 /** Result of trying to put the overlay on screen. */
 enum class HudShowResult { SHOWN, ALREADY_SHOWN, NO_OVERLAY_PERMISSION, FAILED }
@@ -51,6 +76,7 @@ class HudWindowController(
     context: Context,
     private val onGeometryChanged: (HudGeometry) -> Unit = {},
     private val onCompactToggled: (Boolean) -> Unit = {},
+    private val onBoundsChanged: (HudWindowBounds?) -> Unit = {},
 ) {
     private val appContext = context.applicationContext
     private val windowManager =
@@ -79,8 +105,15 @@ class HudWindowController(
     private var startY = 0
     private var startWidthPx = 0
 
+    private val mutableBounds = MutableStateFlow<HudWindowBounds?>(null)
+
+    /** Live position + measured size while the window is shown; null when it is not. */
+    val bounds: StateFlow<HudWindowBounds?> = mutableBounds.asStateFlow()
+
     val isShowing: Boolean
         get() = root != null
+
+    private val layoutListener = View.OnLayoutChangeListener { _, _, _, _, _, _, _, _, _ -> publishBounds() }
 
     private val density: Float
         get() = appContext.resources.displayMetrics.density
@@ -156,6 +189,7 @@ class HudWindowController(
             FrameLayout.LayoutParams(dp(28), dp(28), Gravity.BOTTOM or Gravity.END),
         )
 
+        container.addOnLayoutChangeListener(layoutListener)
         root = container
         panel = inner
         titleView = titleText
@@ -238,6 +272,7 @@ class HudWindowController(
     }
 
     private fun clearViews() {
+        root?.removeOnLayoutChangeListener(layoutListener)
         root = null
         panel = null
         titleView = null
@@ -246,6 +281,10 @@ class HudWindowController(
         layoutParams = null
         styledPrefs = null
         renderedText = null
+        if (mutableBounds.value != null) {
+            mutableBounds.value = null
+            onBoundsChanged(null)
+        }
     }
 
     private fun canDraw(): Boolean = try {
@@ -380,14 +419,52 @@ class HudWindowController(
         } catch (_: Throwable) {
             // View gone.
         }
+        publishBounds()
+    }
+
+    private fun publishBounds() {
+        val view = root
+        val params = layoutParams
+        val next = if (view == null || params == null || view.height <= 0) {
+            if (view == null) null else mutableBounds.value
+        } else {
+            val (sw, sh) = screenSizePx()
+            HudWindowBounds(
+                x = params.x,
+                y = params.y,
+                widthPx = view.width.takeIf { it > 0 } ?: params.width,
+                heightPx = view.height,
+                screenWidthPx = sw,
+                screenHeightPx = sh,
+                density = density,
+            )
+        }
+        if (next != mutableBounds.value) {
+            mutableBounds.value = next
+            onBoundsChanged(next)
+        }
+    }
+
+    /** Full display size in the overlay's coordinate space. */
+    private fun screenSizePx(): Pair<Int, Int> {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            try {
+                val b = windowManager.currentWindowMetrics.bounds
+                if (b.width() > 0 && b.height() > 0) return b.width() to b.height()
+            } catch (_: Throwable) {
+                // Fall through.
+            }
+        }
+        val m = appContext.resources.displayMetrics
+        return m.widthPixels to m.heightPixels
     }
 
     private fun clampToScreen(params: WindowManager.LayoutParams) {
-        val metrics = appContext.resources.displayMetrics
+        val (sw, sh) = screenSizePx()
         val w = params.width.coerceAtLeast(dp(MIN_WIDTH_DP))
         val visible = dp(48)
-        params.x = params.x.coerceIn(-(w - visible), (metrics.widthPixels - visible).coerceAtLeast(0))
-        params.y = params.y.coerceIn(0, (metrics.heightPixels - visible).coerceAtLeast(0))
+        params.x = params.x.coerceIn(-(w - visible), (sw - visible).coerceAtLeast(0))
+        params.y = params.y.coerceIn(0, (sh - visible).coerceAtLeast(0))
     }
 
     private fun clampWidthDp(value: Int): Int = value.coerceIn(MIN_WIDTH_DP, MAX_WIDTH_DP)
@@ -400,6 +477,6 @@ class HudWindowController(
         const val MAX_WIDTH_DP = 520
         const val DEFAULT_WIDTH_DP = 220
         const val MIN_OPACITY = 0.2f
-        private const val LABEL_WIDTH = 8
+        private const val LABEL_WIDTH = 9
     }
 }

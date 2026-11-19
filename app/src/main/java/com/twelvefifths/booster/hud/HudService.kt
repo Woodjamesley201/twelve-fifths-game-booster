@@ -92,6 +92,7 @@ class HudService : Service() {
             context = this,
             onGeometryChanged = ::persistGeometry,
             onCompactToggled = ::persistCompact,
+            onBoundsChanged = { mutableOverlayBounds.value = it },
         )
         mutableRunning.value = true
         requestTileUpdate(this)
@@ -129,6 +130,7 @@ class HudService : Service() {
         windowController = null
         mutableRunning.value = false
         mutableOverlayVisible.value = false
+        mutableOverlayBounds.value = null
         requestTileUpdate(this)
         scope.cancel()
         super.onDestroy()
@@ -306,12 +308,20 @@ class HudService : Service() {
 
         private val mutableRunning = MutableStateFlow(false)
         private val mutableOverlayVisible = MutableStateFlow(false)
+        private val mutableOverlayBounds = MutableStateFlow<HudWindowBounds?>(null)
 
         /** True while the service is alive. Use this instead of local UI state. */
         val running: StateFlow<Boolean> = mutableRunning.asStateFlow()
 
         /** True while the overlay window is on screen (false when hidden from the notification). */
         val overlayVisible: StateFlow<Boolean> = mutableOverlayVisible.asStateFlow()
+
+        /**
+         * Live overlay position and *measured* size (px) plus the screen bounds it
+         * is clamped to; null while the overlay is not on screen. Use it to place
+         * corner presets exactly (write posX/posY via store.updateHudPreferences).
+         */
+        val overlayBounds: StateFlow<HudWindowBounds?> = mutableOverlayBounds.asStateFlow()
 
         val isRunning: Boolean get() = mutableRunning.value
 

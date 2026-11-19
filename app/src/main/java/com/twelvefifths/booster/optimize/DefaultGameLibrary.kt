@@ -94,6 +94,32 @@ class DefaultGameLibrary(
         }
     }
 
+    override suspend fun listLaunchableApps(): List<LaunchableApp> = withContext(Dispatchers.IO) {
+        val query = Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_LAUNCHER)
+        val resolved = try {
+            packageManager.queryIntentActivities(query, 0)
+        } catch (_: Throwable) {
+            emptyList()
+        }
+        val apps = resolved.mapNotNull { info ->
+            try {
+                val activity = info.activityInfo ?: return@mapNotNull null
+                val app = activity.applicationInfo
+                @Suppress("DEPRECATION")
+                val legacyGame = app != null && (app.flags and ApplicationInfo.FLAG_IS_GAME) != 0
+                LaunchableApp(
+                    packageName = activity.packageName,
+                    label = (app?.let { labelFor(it) } ?: info.loadLabel(packageManager)?.toString()).orEmpty(),
+                    isGame = app != null && (app.category == ApplicationInfo.CATEGORY_GAME || legacyGame),
+                    isSystem = app != null && PackageSafety.isSystemPackage(app),
+                )
+            } catch (_: Throwable) {
+                null
+            }
+        }
+        LaunchableApps.normalize(apps, appContext.packageName)
+    }
+
     /** Emits once immediately and again on every package add / remove / replace. */
     private fun packageChanges(): Flow<Long> = callbackFlow {
         trySend(0L)

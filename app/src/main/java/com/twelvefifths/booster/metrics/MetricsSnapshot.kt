@@ -1,5 +1,7 @@
 package com.twelvefifths.booster.metrics
 
+import com.twelvefifths.booster.optimize.BoosterPermission
+
 /**
  * One sample of system / game metrics.
  *
@@ -60,6 +62,12 @@ data class MetricsSnapshot(
     val lowMemory: Boolean? = null,
     val pingTarget: String? = null,
     val pingStatus: PingStatus = PingStatus.NOT_MEASURED,
+    /**
+     * For every metric whose support is [MetricSupport.NEEDS_PERMISSION], the
+     * permission that unlocks it. Read it with [requiredPermission]. Entries for
+     * metrics in other states are ignored. Not persisted in session history.
+     */
+    val requiredPermissions: Map<MetricKey, BoosterPermission> = emptyMap(),
 ) {
     companion object {
         /** Ping is always a TCP handshake time; use this string when labelling it. */

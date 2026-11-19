@@ -14,6 +14,13 @@ Everything is additive: existing constructor calls and signatures still compile.
   - `ramAvailableBytes`, `lowMemory`.
   - `pingTarget` (e.g. `8.8.8.8:443`) and `pingStatus: PingStatus` (OK / TIMEOUT / UNREACHABLE / UNKNOWN_HOST / NO_NETWORK / INVALID_TARGET / NOT_MEASURED). `pingMs` is set only when the status is OK. Label it `MetricsSnapshot.PING_METHOD` ("TCP connect").
 - `snapshot.temperatureSummary()` returns the honest fallback chain **CPU zone → battery → thermal status**, with `source`, `label` (`CPU °C` / `BATT °C` / `THERMAL`), `celsius` (null for status), and `detail`. Use it for one "temperature" card.
+- Per-metric permission routing:
+  - `MetricKey` enum: FPS, CPU_TEMP, GPU_TEMP, BATTERY_TEMP, THERMAL_STATUS, THERMAL_HEADROOM, RAM, CPU_USAGE, GPU_USAGE, PING, VRAM.
+  - `snapshot.support(key)` returns that metric's `MetricSupport`.
+  - `snapshot.requiredPermission(key): BoosterPermission?` returns the permission only while that metric is NEEDS_PERMISSION, and null otherwise. Get the intent with `PermissionChecker.state(p).settingsIntent` or call `openSettings(ctx, p)`.
+  - The data comes from `MetricsSnapshot.requiredPermissions: Map<MetricKey, BoosterPermission>`. It is not saved in session history.
+  - If the map has no entry, show a generic "needs permission" and don't guess.
+  - Today no metric reports NEEDS_PERMISSION; every gated feature is either supported or truly unsupported. This seam is ready for the first one that does.
 - The ping target is configurable: `store.setPingTarget("host:port")` returns the parsed `PingTarget`, or null if the input is invalid. Also available: `store.resetPingTarget()` and the `store.pingTarget` flow.
 
 ## HUD: `hud/`
@@ -28,6 +35,17 @@ Everything is additive: existing constructor calls and signatures still compile.
   - Tap to toggle compact/expanded.
   - Position, width, and compact state are saved to `HudPreferences` through `store.updateHudPreferences { }`, which is atomic.
   - Setting `posX`/`posY`/`widthDp` from the settings screen moves the live window, for example to reset its position.
+- `HudService.overlayBounds: StateFlow<HudWindowBounds?>` (also `HudWindowController.bounds`) gives the live window state. It is null while the overlay is off screen.
+  - `HudWindowBounds(x, y, widthPx, heightPx, screenWidthPx, screenHeightPx, density)`, plus `widthDp` and `heightDp`.
+  - `heightPx` is the measured height after layout. It changes with compact/expanded mode, the enabled rows, and the width-scaled text.
+  - The screen size is the one the window is clamped to. On API 30+ that's `WindowManager.currentWindowMetrics`, the full display.
+  - Bottom-right preset: `posX = screenWidthPx - widthPx - m`, `posY = screenHeightPx - heightPx - m`, written with `store.updateHudPreferences { }`. Coordinates are in px with top-left gravity.
+- Overlay wording lives in `HudRows`:
+  - `UNSUPPORTED_TEXT = "Not available on Android"`
+  - `NEEDS_PERMISSION_TEXT = "Needs permission"`
+  - `WAITING_TEXT = "—"`
+  - `PING_LABEL = "TCP ping"`
+- `HudRow.requiredPermission: BoosterPermission?` is set only for NEEDS_PERMISSION rows. `HudRow.Key.metric` maps each row to its `MetricKey` (TEMP maps to CPU_TEMP).
 - `HudRows.build(snapshot, prefs)` is the pure row model the overlay renders. Compact mode shows only rows that have a real value, up to 4. Use it for the in-app preview so both views match.
 - POST_NOTIFICATIONS is optional. Without it the HUD still runs, but Android hides the notification, so only the tile and the in-app toggle work.
 
@@ -37,6 +55,11 @@ Everything is additive: existing constructor calls and signatures still compile.
   - `all()`, `missing()`, `isGranted(BoosterPermission)`, `state(p)`, `openSettings(ctx, p)`.
   - Each `PermissionState` carries `granted`, `title`, `reason`, and `settingsIntent`. NOTIFICATIONS also has `runtimePermission`, to request first with a RequestPermission launcher.
   - Permissions covered: OVERLAY, USAGE_ACCESS, DND_POLICY, NOTIFICATIONS.
+- `GameLibrary.listLaunchableApps(): List<LaunchableApp>` is for the add-game picker.
+  - It is `suspend`, runs on Dispatchers.IO, and never throws.
+  - It returns every app with a MAIN/LAUNCHER activity, system apps included and this app excluded, deduped by package and sorted by label.
+  - `LaunchableApp(packageName, label, isGame, isSystem)`. `isGame` covers CATEGORY_GAME and the legacy `isGame` flag.
+  - Use it instead of `ClosableApps.list`, which deliberately leaves out system and essential apps.
 - `ClosableApps.list(context)` is now `suspend` and runs on IO. The existing `LaunchedEffect` call still compiles.
   - It excludes system, updated-system, and persistent apps, plus our own app, launchers, IMEs, accessibility services, device admins, the live wallpaper, the default dialer/SMS app, Play services/Store, System UI, and Samsung game services.
 - `OptimizerCapabilities.canKillOtherApps` is **false on Android 14+**, which includes the Tab A9 on Android 16. The platform ignores `killBackgroundProcesses` for other apps there. Show this, and offer `SettingsShortcuts.appInfo(pkg)` so the user can Force stop an app themselves.

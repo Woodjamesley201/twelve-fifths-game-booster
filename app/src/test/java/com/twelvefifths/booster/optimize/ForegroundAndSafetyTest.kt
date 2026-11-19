@@ -83,4 +83,21 @@ class ForegroundAndSafetyTest {
         assertFalse(merged.first { it.packageName == "com.gone" }.isInstalled)
         assertEquals(50L, merged.first().lastPlayedMs)
     }
+
+    @Test
+    fun launchableAppsExcludeSelfDedupeAndSortByLabel() {
+        val apps = listOf(
+            LaunchableApp("com.twelvefifths.booster", "Twelve Fifths", false, false),
+            LaunchableApp("com.b", "beta", true, false),
+            LaunchableApp("com.android.settings", "Settings", false, true),
+            LaunchableApp("com.b", "Beta dup", true, false),
+            LaunchableApp("com.a", "", false, false),
+            LaunchableApp("", "Blank", false, false),
+        )
+        val out = LaunchableApps.normalize(apps, "com.twelvefifths.booster")
+        assertEquals(listOf("com.b", "com.a", "com.android.settings"), out.map { it.packageName })
+        assertEquals("com.a", out[1].label)
+        assertTrue("system apps are kept", out.any { it.isSystem })
+        assertTrue(out.first().isGame)
+    }
 }

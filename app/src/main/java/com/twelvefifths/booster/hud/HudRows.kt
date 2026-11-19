@@ -1,10 +1,13 @@
 package com.twelvefifths.booster.hud
 
 import com.twelvefifths.booster.data.HudPreferences
+import com.twelvefifths.booster.metrics.MetricKey
 import com.twelvefifths.booster.metrics.MetricSupport
 import com.twelvefifths.booster.metrics.MetricsSnapshot
 import com.twelvefifths.booster.metrics.TemperatureSource
+import com.twelvefifths.booster.metrics.requiredPermission
 import com.twelvefifths.booster.metrics.temperatureSummary
+import com.twelvefifths.booster.optimize.BoosterPermission
 import java.util.Locale
 
 /**
@@ -17,8 +20,25 @@ data class HudRow(
     val value: String?,
     val support: MetricSupport,
     val statusText: String,
+    /** Set only when [support] is NEEDS_PERMISSION: the permission that unlocks this row. */
+    val requiredPermission: BoosterPermission? = null,
 ) {
-    enum class Key { FPS, TEMP, GPU_TEMP, RAM, CPU_USAGE, GPU_USAGE, PING, VRAM }
+    enum class Key {
+        FPS, TEMP, GPU_TEMP, RAM, CPU_USAGE, GPU_USAGE, PING, VRAM;
+
+        /** The snapshot metric behind this row (TEMP resolves to CPU temp; see [HudRows]). */
+        val metric: MetricKey
+            get() = when (this) {
+                FPS -> MetricKey.FPS
+                TEMP -> MetricKey.CPU_TEMP
+                GPU_TEMP -> MetricKey.GPU_TEMP
+                RAM -> MetricKey.RAM
+                CPU_USAGE -> MetricKey.CPU_USAGE
+                GPU_USAGE -> MetricKey.GPU_USAGE
+                PING -> MetricKey.PING
+                VRAM -> MetricKey.VRAM
+            }
+    }
 
     /** What a plain-text renderer should print in the value column. */
     val display: String get() = value ?: statusText
@@ -40,6 +60,12 @@ data class HudRow(
 object HudRows {
     const val COMPACT_MAX = 4
 
+    /** Overlay wording, shared with the in-app preview. */
+    const val UNSUPPORTED_TEXT = "Not available on Android"
+    const val NEEDS_PERMISSION_TEXT = "Needs permission"
+    const val WAITING_TEXT = "—"
+    const val PING_LABEL = "TCP ping"
+
     fun build(snapshot: MetricsSnapshot, prefs: HudPreferences): List<HudRow> {
         val rows = ArrayList<HudRow>(8)
         if (prefs.showFps) rows += row(HudRow.Key.FPS, "FPS", snapshot.fps?.let { fmt("%.0f", it) }, snapshot.fpsSupport)
@@ -50,7 +76,14 @@ object HudRows {
         if (prefs.showGpuUsage) rows += row(HudRow.Key.GPU_USAGE, "GPU %", snapshot.gpuUsage?.let { fmt("%.0f", it) }, snapshot.gpuUsageSupport)
         if (prefs.showPing) rows += pingRow(snapshot)
         if (prefs.showVram) rows += row(HudRow.Key.VRAM, "VRAM", snapshot.vramUsedBytes?.let { formatBytes(it) }, snapshot.vramSupport)
-        return if (prefs.compact) rows.filter { it.hasRealValue }.take(COMPACT_MAX) else rows
+        val withPermissions = rows.map { row ->
+            if (row.support == MetricSupport.NEEDS_PERMISSION) {
+                row.copy(requiredPermission = snapshot.requiredPermission(row.key.metric))
+            } else {
+                row
+            }
+        }
+        return if (prefs.compact) withPermissions.filter { it.hasRealValue }.take(COMPACT_MAX) else withPermissions
     }
 
     private fun temperatureRow(s: MetricsSnapshot): HudRow {
@@ -78,19 +111,19 @@ object HudRows {
     private fun pingRow(s: MetricsSnapshot): HudRow {
         val ms = s.pingMs
         if (s.pingSupport == MetricSupport.SUPPORTED && ms != null) {
-            return row(HudRow.Key.PING, "PING", "$ms ms", MetricSupport.SUPPORTED)
+            return row(HudRow.Key.PING, PING_LABEL, "$ms ms", MetricSupport.SUPPORTED)
         }
         val status = s.pingStatus.name.lowercase(Locale.US).replace('_', ' ')
-        return HudRow(HudRow.Key.PING, "PING", null, s.pingSupport, if (s.pingSupport == MetricSupport.SUPPORTED) status else supportText(s.pingSupport))
+        return HudRow(HudRow.Key.PING, PING_LABEL, null, s.pingSupport, if (s.pingSupport == MetricSupport.SUPPORTED) status else supportText(s.pingSupport))
     }
 
     private fun row(key: HudRow.Key, label: String, value: String?, support: MetricSupport): HudRow =
         HudRow(key, label, if (support == MetricSupport.SUPPORTED) value else null, support, supportText(support))
 
     fun supportText(support: MetricSupport): String = when (support) {
-        MetricSupport.SUPPORTED -> "—"
-        MetricSupport.NEEDS_PERMISSION -> "needs permission"
-        MetricSupport.UNSUPPORTED -> "unsupported"
+        MetricSupport.SUPPORTED -> WAITING_TEXT
+        MetricSupport.NEEDS_PERMISSION -> NEEDS_PERMISSION_TEXT
+        MetricSupport.UNSUPPORTED -> UNSUPPORTED_TEXT
     }
 
     fun formatBytes(bytes: Long): String {
