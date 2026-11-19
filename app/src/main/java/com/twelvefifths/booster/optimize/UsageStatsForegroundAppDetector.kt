@@ -1,18 +1,28 @@
 package com.twelvefifths.booster.optimize
 
-import android.app.AppOpsManager
 import android.app.usage.UsageEvents
 import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.os.Build
-import android.os.Process
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharedFlow
+import kotlinx.coroutines.flow.SharingStarted
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.shareIn
 
 /**
  * Foreground-app detection through [UsageStatsManager]. Emits null until the
  * user grants usage access in system settings.
+ *
+ * Incremental: each poll reads only the events since the previous poll (plus a
+ * small overlap) and feeds them to a [ForegroundTracker], so a game that has
+ * been in front for a long time stays detected even when no new events arrive.
+ * One poller is shared by every collector.
  *
  * Owner: Script Nathan.
  */
@@ -23,65 +33,65 @@ class UsageStatsForegroundAppDetector(
     private val appContext = context.applicationContext
     private val usageStatsManager =
         appContext.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-    private val appOpsManager =
-        appContext.getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
+    private val permissions = PermissionChecker(appContext)
+    private val tracker = ForegroundTracker()
+    private var lastQueryEndMs: Long = 0L
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
-    override fun hasUsageAccess(): Boolean {
-        val ops = appOpsManager ?: return false
-        val mode = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            ops.unsafeCheckOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                Process.myUid(),
-                appContext.packageName,
-            )
-        } else {
-            @Suppress("DEPRECATION")
-            ops.checkOpNoThrow(
-                AppOpsManager.OPSTR_GET_USAGE_STATS,
-                Process.myUid(),
-                appContext.packageName,
-            )
-        }
-        return mode == AppOpsManager.MODE_ALLOWED
-    }
-
-    override fun observeForegroundApp(): Flow<String?> = flow {
+    // Declared after every field it reads.
+    private val shared: SharedFlow<String?> = flow {
         while (true) {
-            emit(if (hasUsageAccess()) currentForegroundPackage() else null)
+            emit(if (hasUsageAccess()) poll() else resetAndNull())
             delay(POLL_MS)
         }
+    }.distinctUntilChanged()
+        .shareIn(scope, SharingStarted.WhileSubscribed(STOP_TIMEOUT_MS), replay = 1)
+
+    override fun hasUsageAccess(): Boolean = permissions.hasUsageAccess()
+
+    override fun observeForegroundApp(): Flow<String?> = shared
+
+    private fun resetAndNull(): String? {
+        tracker.reset()
+        lastQueryEndMs = 0L
+        return null
     }
 
-    private fun currentForegroundPackage(): String? {
+    private fun poll(): String? {
         val manager = usageStatsManager ?: return null
         val end = System.currentTimeMillis()
-        val start = end - WINDOW_MS
+        val start = if (lastQueryEndMs == 0L || end < lastQueryEndMs) {
+            end - INITIAL_WINDOW_MS
+        } else {
+            lastQueryEndMs - OVERLAP_MS
+        }
         val events = try {
             manager.queryEvents(start, end)
         } catch (_: Throwable) {
-            return null
-        } ?: return null
-        var latestPkg: String? = null
-        var latestStamp = 0L
+            return tracker.current
+        } ?: return tracker.current
+        lastQueryEndMs = end
+        val batch = ArrayList<ForegroundTracker.Event>()
         val event = UsageEvents.Event()
         while (events.hasNextEvent()) {
-            events.getNextEvent(event)
-            val isMoveToFg = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            if (!events.getNextEvent(event)) break
+            val resumed = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 event.eventType == UsageEvents.Event.ACTIVITY_RESUMED
             } else {
                 @Suppress("DEPRECATION")
                 event.eventType == UsageEvents.Event.MOVE_TO_FOREGROUND
             }
-            if (isMoveToFg && event.timeStamp >= latestStamp) {
-                latestStamp = event.timeStamp
-                latestPkg = event.packageName
+            if (resumed) {
+                batch.add(ForegroundTracker.Event(event.packageName, ForegroundTracker.Kind.RESUMED, event.timeStamp))
             }
         }
-        return latestPkg
+        return tracker.apply(batch)
     }
 
     private companion object {
         const val POLL_MS = 1_000L
-        const val WINDOW_MS = 10_000L
+        const val OVERLAP_MS = 2_000L
+        const val INITIAL_WINDOW_MS = 30 * 60_000L
+        const val STOP_TIMEOUT_MS = 5_000L
     }
 }
