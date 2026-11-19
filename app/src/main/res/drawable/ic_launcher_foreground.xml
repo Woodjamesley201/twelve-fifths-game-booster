@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Glass tile with a neon performance line and "12/5" bars. Owner: Ui isaac. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Glass tile (safe zone 66dp centered). -->
+    <path
+        android:pathData="M38,30h32a8,8 0,0 1,8 8v32a8,8 0,0 1,-8 8h-32a8,8 0,0 1,-8 -8v-32a8,8 0,0 1,8 -8z"
+        android:fillColor="#1FFFFFFF"
+        android:strokeWidth="1.2"
+        android:strokeColor="#40FFFFFF" />
+    <!-- Performance line. -->
+    <path
+        android:pathData="M35,64 L45,56 L52,60 L61,46 L67,51 L73,40"
+        android:strokeWidth="3.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:fillColor="#00000000">
+        <aapt:attr name="android:strokeColor">
+            <gradient
+                android:type="linear"
+                android:startX="35"
+                android:startY="64"
+                android:endX="73"
+                android:endY="40"
+                android:startColor="#FF4F8CFF"
+                android:endColor="#FFA855F7" />
+        </aapt:attr>
+    </path>
+    <!-- Peak dot. -->
+    <path
+        android:pathData="M73,40m-3,0a3,3 0,1 1,6 0a3,3 0,1 1,-6 0"
+        android:fillColor="#FFA855F7" />
+    <!-- Twelve fifths: five bars, the last overflowing. -->
+    <path android:pathData="M38,72h4v-3h-4z" android:fillColor="#994F8CFF" />
+    <path android:pathData="M45,72h4v-5h-4z" android:fillColor="#B34F8CFF" />
+    <path android:pathData="M52,72h4v-6h-4z" android:fillColor="#CC6A75FA" />
+    <path android:pathData="M59,72h4v-8h-4z" android:fillColor="#E68A62F8" />
+    <path android:pathData="M66,72h4v-10h-4z" android:fillColor="#FFA855F7" />
+</vector>

@@ -116,7 +116,7 @@ class HudService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
         val notification: Notification = NotificationCompat.Builder(this, CHANNEL_ID)
-            .setSmallIcon(R.drawable.ic_launcher)
+            .setSmallIcon(R.drawable.ic_stat_hud)
             .setContentTitle(getString(R.string.hud_notification_title))
             .setContentText(getString(R.string.hud_notification_text))
             .setContentIntent(openApp)

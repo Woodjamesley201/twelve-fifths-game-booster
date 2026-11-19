@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Themed-icon silhouette. Owner: Ui isaac. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:pathData="M35,64 L45,56 L52,60 L61,46 L67,51 L73,40"
+        android:strokeWidth="3.6"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round"
+        android:strokeColor="#FFFFFFFF"
+        android:fillColor="#00000000" />
+    <path android:pathData="M38,72h4v-3h-4z M45,72h4v-5h-4z M52,72h4v-6h-4z M59,72h4v-8h-4z M66,72h4v-10h-4z" android:fillColor="#FFFFFFFF" />
+</vector>

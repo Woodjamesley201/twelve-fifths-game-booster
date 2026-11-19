@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Brand palette mirrored from ui/theme/Color.kt for XML / platform views. Owner: Ui isaac. -->
+<resources>
+    <color name="tf_charcoal">#FF0B0D12</color>
+    <color name="tf_charcoal_raised">#FF12141C</color>
+    <color name="tf_neon_blue">#FF4F8CFF</color>
+    <color name="tf_neon_purple">#FFA855F7</color>
+    <color name="tf_text">#FFF4F6FB</color>
+    <color name="tf_text_muted">#FF9AA3B5</color>
+</resources>
