@@ -21,8 +21,8 @@ import com.twelvefifths.booster.optimize.UsageStatsForegroundAppDetector
 class BoosterGraph(context: Context) {
     private val appContext = context.applicationContext
     val store: BoosterStore = BoosterStore(appContext)
-    val metricsSource: MetricsSource = AndroidMetricsSource(appContext)
+    val metricsSource: MetricsSource = AndroidMetricsSource(appContext, store.pingTarget)
     val gameLibrary: GameLibrary = DefaultGameLibrary(appContext, store)
     val foregroundAppDetector: ForegroundAppDetector = UsageStatsForegroundAppDetector(appContext)
-    val optimizer: Optimizer = DefaultOptimizer(appContext, metricsSource, store)
+    val optimizer: Optimizer = DefaultOptimizer(appContext, metricsSource, store, foregroundAppDetector)
 }

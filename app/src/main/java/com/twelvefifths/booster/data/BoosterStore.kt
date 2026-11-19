@@ -2,15 +2,24 @@ package com.twelvefifths.booster.data
 
 import android.content.Context
 import androidx.datastore.core.DataStore
+import androidx.datastore.core.handlers.ReplaceFileCorruptionHandler
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.edit
+import androidx.datastore.preferences.core.emptyPreferences
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.twelvefifths.booster.metrics.MetricSupport
 import com.twelvefifths.booster.metrics.MetricsSnapshot
+import com.twelvefifths.booster.metrics.PingStatus
+import com.twelvefifths.booster.metrics.PingTarget
+import com.twelvefifths.booster.metrics.ThermalStatusLevel
 import com.twelvefifths.booster.optimize.GameEntry
 import com.twelvefifths.booster.optimize.OptimizationProfile
+import com.twelvefifths.booster.optimize.OptimizationSession
+import java.io.IOException
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONArray
@@ -18,6 +27,7 @@ import org.json.JSONObject
 
 private val Context.boosterDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "twelve_fifths_booster",
+    corruptionHandler = ReplaceFileCorruptionHandler { emptyPreferences() },
 )
 
 /**
@@ -34,24 +44,70 @@ class BoosterStore(
     private val appContext = context.applicationContext
     private val dataStore = appContext.boosterDataStore
 
-    val hudPreferences: Flow<HudPreferences> = dataStore.data.map { prefs ->
+    /** DataStore data that survives read errors (IOException → empty prefs) instead of crashing collectors. */
+    private val safeData: Flow<Preferences> = dataStore.data.catch { e ->
+        if (e is IOException) emit(emptyPreferences()) else throw e
+    }
+
+    val hudPreferences: Flow<HudPreferences> = safeData.map { prefs ->
         decodeHud(prefs[KEY_HUD])
-    }
+    }.distinctUntilChanged()
 
-    val manualGames: Flow<List<GameEntry>> = dataStore.data.map { prefs ->
+    val manualGames: Flow<List<GameEntry>> = safeData.map { prefs ->
         decodeGames(prefs[KEY_MANUAL_GAMES])
-    }
+    }.distinctUntilChanged()
 
-    val lastPlayed: Flow<Map<String, Long>> = dataStore.data.map { prefs ->
+    val lastPlayed: Flow<Map<String, Long>> = safeData.map { prefs ->
         decodeLastPlayed(prefs[KEY_LAST_PLAYED])
-    }
+    }.distinctUntilChanged()
 
-    val sessionHistory: Flow<List<SessionRecord>> = dataStore.data.map { prefs ->
+    val sessionHistory: Flow<List<SessionRecord>> = safeData.map { prefs ->
         decodeSessions(prefs[KEY_SESSIONS])
-    }
+    }.distinctUntilChanged()
+
+    /** All saved per-game profiles, keyed by package. */
+    val profiles: Flow<Map<String, OptimizationProfile>> = safeData.map { prefs ->
+        decodeProfiles(prefs[KEY_PROFILES])
+    }.distinctUntilChanged()
+
+    /** Host:port for the TCP-connect latency probe. Defaults to [PingTarget.DEFAULT]. */
+    val pingTarget: Flow<PingTarget> = safeData.map { prefs ->
+        PingTarget.parse(prefs[KEY_PING_TARGET]) ?: PingTarget.DEFAULT
+    }.distinctUntilChanged()
 
     suspend fun setHudPreferences(value: HudPreferences) {
         dataStore.edit { it[KEY_HUD] = encodeHud(value) }
+    }
+
+    /** Atomic read-modify-write, so the HUD service and the settings screen do not clobber each other. */
+    suspend fun updateHudPreferences(transform: (HudPreferences) -> HudPreferences) {
+        dataStore.edit { prefs ->
+            prefs[KEY_HUD] = encodeHud(transform(decodeHud(prefs[KEY_HUD])))
+        }
+    }
+
+    /**
+     * Sets the ping target from user text (`host`, `host:port`, `[v6]:port`).
+     * Returns the parsed target, or null (and changes nothing) if invalid.
+     */
+    suspend fun setPingTarget(input: String): PingTarget? {
+        val target = PingTarget.parse(input) ?: return null
+        dataStore.edit { it[KEY_PING_TARGET] = target.label }
+        return target
+    }
+
+    suspend fun resetPingTarget() {
+        dataStore.edit { it.remove(KEY_PING_TARGET) }
+    }
+
+    /** The in-flight session, persisted for crash recovery (null when none). */
+    suspend fun activeSession(): OptimizationSession? =
+        decodeActiveSession(safeData.first()[KEY_ACTIVE_SESSION])
+
+    suspend fun setActiveSession(session: OptimizationSession?) {
+        dataStore.edit { prefs ->
+            if (session == null) prefs.remove(KEY_ACTIVE_SESSION) else prefs[KEY_ACTIVE_SESSION] = encodeActiveSession(session)
+        }
     }
 
     suspend fun setOnboardingDone(done: Boolean) {
@@ -86,7 +142,7 @@ class BoosterStore(
     }
 
     suspend fun loadProfile(gamePackage: String): OptimizationProfile {
-        val profiles = dataStore.data.map { prefs -> decodeProfiles(prefs[KEY_PROFILES]) }.first()
+        val profiles = safeData.map { prefs -> decodeProfiles(prefs[KEY_PROFILES]) }.first()
         return profiles[gamePackage] ?: OptimizationProfile(gamePackage = gamePackage)
     }
 
@@ -232,6 +288,8 @@ class BoosterStore(
                             enableDoNotDisturb = p.optBoolean("enableDoNotDisturb", false),
                             suggestBatterySaverSettings = p.optBoolean("suggestBatterySaverSettings", false),
                             suggestGameModeSettings = p.optBoolean("suggestGameModeSettings", false),
+                            autoEndWhenGameLeaves = p.optBoolean("autoEndWhenGameLeaves", true),
+                            launchGameOnStart = p.optBoolean("launchGameOnStart", false),
                         ),
                     )
                 }
@@ -252,7 +310,9 @@ class BoosterStore(
                     .put("closeBackgroundPackages", close)
                     .put("enableDoNotDisturb", p.enableDoNotDisturb)
                     .put("suggestBatterySaverSettings", p.suggestBatterySaverSettings)
-                    .put("suggestGameModeSettings", p.suggestGameModeSettings),
+                    .put("suggestGameModeSettings", p.suggestGameModeSettings)
+                    .put("autoEndWhenGameLeaves", p.autoEndWhenGameLeaves)
+                    .put("launchGameOnStart", p.launchGameOnStart),
             )
         }
         return o.toString()
@@ -264,7 +324,8 @@ class BoosterStore(
             val arr = JSONArray(raw)
             buildList {
                 for (i in 0 until arr.length()) {
-                    val o = arr.getJSONObject(i)
+                    val o = arr.optJSONObject(i) ?: continue
+                    if (!o.has("id") || !o.has("gamePackage")) continue
                     add(
                         SessionRecord(
                             id = o.getString("id"),
@@ -273,9 +334,14 @@ class BoosterStore(
                             endedAtMs = o.optLong("endedAtMs").takeIf { it > 0L },
                             before = o.optJSONObject("before")?.let { decodeSnapshot(it) },
                             after = o.optJSONObject("after")?.let { decodeSnapshot(it) },
-                            closedPackages = o.optJSONArray("closedPackages")?.let { a ->
-                                buildList { for (j in 0 until a.length()) add(a.getString(j)) }
-                            } ?: emptyList(),
+                            closedPackages = o.optStringList("closedPackages"),
+                            afterOptimize = o.optJSONObject("afterOptimize")?.let { decodeSnapshot(it) },
+                            requestedClosePackages = o.optStringList("requestedClosePackages"),
+                            closeSupported = o.optBoolean("closeSupported", true),
+                            dndEnabledByUs = o.optBoolean("dndEnabledByUs", false),
+                            dndRestored = if (o.has("dndRestored") && !o.isNull("dndRestored")) o.optBoolean("dndRestored") else null,
+                            endReason = o.optString("endReason", "").ifEmpty { null },
+                            notes = o.optStringList("notes"),
                         ),
                     )
                 }
@@ -296,10 +362,14 @@ class BoosterStore(
                     .put("endedAtMs", r.endedAtMs ?: 0L)
                     .put("before", r.before?.let { encodeSnapshot(it) })
                     .put("after", r.after?.let { encodeSnapshot(it) })
-                    .put(
-                        "closedPackages",
-                        JSONArray().also { a -> r.closedPackages.forEach { a.put(it) } },
-                    ),
+                    .put("closedPackages", r.closedPackages.toJsonArray())
+                    .put("afterOptimize", r.afterOptimize?.let { encodeSnapshot(it) })
+                    .put("requestedClosePackages", r.requestedClosePackages.toJsonArray())
+                    .put("closeSupported", r.closeSupported)
+                    .put("dndEnabledByUs", r.dndEnabledByUs)
+                    .put("dndRestored", r.dndRestored ?: JSONObject.NULL)
+                    .put("endReason", r.endReason ?: "")
+                    .put("notes", r.notes.toJsonArray()),
             )
         }
         return arr.toString()
@@ -325,6 +395,22 @@ class BoosterStore(
         pingSupport = supportOf(o, "pingSupport"),
         vramUsedBytes = o.optNullableLong("vramUsedBytes"),
         vramSupport = supportOf(o, "vramSupport"),
+        cpuTempSource = o.optNullableString("cpuTempSource"),
+        gpuTempSource = o.optNullableString("gpuTempSource"),
+        batteryTempC = o.optNullableFloat("batteryTempC"),
+        batteryTempSupport = supportOf(o, "batteryTempSupport"),
+        thermalStatus = o.optNullableString("thermalStatus")?.let { name ->
+            ThermalStatusLevel.entries.firstOrNull { it.name == name }
+        },
+        thermalStatusSupport = supportOf(o, "thermalStatusSupport"),
+        thermalHeadroom = o.optNullableFloat("thermalHeadroom"),
+        thermalHeadroomSupport = supportOf(o, "thermalHeadroomSupport"),
+        ramAvailableBytes = o.optNullableLong("ramAvailableBytes"),
+        lowMemory = if (o.has("lowMemory") && !o.isNull("lowMemory")) o.optBoolean("lowMemory") else null,
+        pingTarget = o.optNullableString("pingTarget"),
+        pingStatus = o.optNullableString("pingStatus")?.let { name ->
+            PingStatus.entries.firstOrNull { it.name == name }
+        } ?: PingStatus.NOT_MEASURED,
     )
 
     private fun encodeSnapshot(s: MetricsSnapshot): JSONObject = JSONObject()
@@ -347,6 +433,18 @@ class BoosterStore(
         .put("pingSupport", s.pingSupport.name)
         .put("vramUsedBytes", s.vramUsedBytes ?: JSONObject.NULL)
         .put("vramSupport", s.vramSupport.name)
+        .put("cpuTempSource", s.cpuTempSource ?: JSONObject.NULL)
+        .put("gpuTempSource", s.gpuTempSource ?: JSONObject.NULL)
+        .put("batteryTempC", s.batteryTempC ?: JSONObject.NULL)
+        .put("batteryTempSupport", s.batteryTempSupport.name)
+        .put("thermalStatus", s.thermalStatus?.name ?: JSONObject.NULL)
+        .put("thermalStatusSupport", s.thermalStatusSupport.name)
+        .put("thermalHeadroom", s.thermalHeadroom ?: JSONObject.NULL)
+        .put("thermalHeadroomSupport", s.thermalHeadroomSupport.name)
+        .put("ramAvailableBytes", s.ramAvailableBytes ?: JSONObject.NULL)
+        .put("lowMemory", s.lowMemory ?: JSONObject.NULL)
+        .put("pingTarget", s.pingTarget ?: JSONObject.NULL)
+        .put("pingStatus", s.pingStatus.name)
 
     private fun supportOf(o: JSONObject, key: String): MetricSupport =
         try {
@@ -361,12 +459,64 @@ class BoosterStore(
     private fun JSONObject.optNullableLong(key: String): Long? =
         if (isNull(key) || !has(key)) null else optLong(key)
 
+    private fun JSONObject.optNullableString(key: String): String? =
+        if (isNull(key) || !has(key)) null else optString(key).ifEmpty { null }
+
+    private fun JSONObject.optStringList(key: String): List<String> {
+        val a = optJSONArray(key) ?: return emptyList()
+        return buildList { for (j in 0 until a.length()) a.optString(j, null)?.let { add(it) } }
+    }
+
+    private fun List<String>.toJsonArray(): JSONArray = JSONArray().also { a -> forEach { a.put(it) } }
+
+    private fun encodeActiveSession(s: OptimizationSession): String = JSONObject()
+        .put("id", s.id)
+        .put("gamePackage", s.gamePackage)
+        .put("startedAtMs", s.startedAtMs)
+        .put("before", s.before?.let { encodeSnapshot(it) })
+        .put("afterOptimize", s.afterOptimize?.let { encodeSnapshot(it) })
+        .put("closedPackages", s.closedPackages.toJsonArray())
+        .put("requestedClosePackages", s.requestedClosePackages.toJsonArray())
+        .put("skippedUnsafePackages", s.skippedUnsafePackages.toJsonArray())
+        .put("closeSupported", s.closeSupported)
+        .put("dndWasEnabledByUs", s.dndWasEnabledByUs)
+        .put("previousDndFilter", s.previousDndFilter ?: JSONObject.NULL)
+        .put("dndFilterSetByUs", s.dndFilterSetByUs ?: JSONObject.NULL)
+        .put("notes", s.notes.toJsonArray())
+        .toString()
+
+    private fun decodeActiveSession(raw: String?): OptimizationSession? {
+        if (raw.isNullOrBlank()) return null
+        return try {
+            val o = JSONObject(raw)
+            OptimizationSession(
+                id = o.getString("id"),
+                gamePackage = o.getString("gamePackage"),
+                startedAtMs = o.getLong("startedAtMs"),
+                before = o.optJSONObject("before")?.let { decodeSnapshot(it) },
+                afterOptimize = o.optJSONObject("afterOptimize")?.let { decodeSnapshot(it) },
+                closedPackages = o.optStringList("closedPackages"),
+                requestedClosePackages = o.optStringList("requestedClosePackages"),
+                skippedUnsafePackages = o.optStringList("skippedUnsafePackages"),
+                closeSupported = o.optBoolean("closeSupported", true),
+                dndWasEnabledByUs = o.optBoolean("dndWasEnabledByUs", false),
+                previousDndFilter = if (o.isNull("previousDndFilter")) null else o.optInt("previousDndFilter"),
+                dndFilterSetByUs = if (o.isNull("dndFilterSetByUs")) null else o.optInt("dndFilterSetByUs"),
+                notes = o.optStringList("notes"),
+            )
+        } catch (_: Throwable) {
+            null
+        }
+    }
+
     private companion object {
         val KEY_HUD = stringPreferencesKey("hud")
         val KEY_MANUAL_GAMES = stringPreferencesKey("manual_games")
         val KEY_LAST_PLAYED = stringPreferencesKey("last_played")
         val KEY_PROFILES = stringPreferencesKey("profiles")
         val KEY_SESSIONS = stringPreferencesKey("sessions")
+        val KEY_ACTIVE_SESSION = stringPreferencesKey("active_session")
+        val KEY_PING_TARGET = stringPreferencesKey("ping_target")
         const val MAX_SESSIONS = 40
     }
 }

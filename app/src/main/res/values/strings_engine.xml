@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Engine (HUD service / tile) strings. Owner: Script Nathan. -->
+<resources>
+    <string name="hud_notification_hide">Hide HUD</string>
+    <string name="hud_notification_show">Show HUD</string>
+    <string name="hud_notification_text_hidden">HUD is hidden. Tap Show HUD to bring it back.</string>
+    <string name="hud_tile_label">Game HUD</string>
+    <string name="hud_tile_on">On</string>
+    <string name="hud_tile_off">Off</string>
+</resources>
