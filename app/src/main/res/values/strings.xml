@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Twelve Fifths</string>
+    <string name="hud_channel_id">hud</string>
+    <string name="hud_channel_name">Game HUD</string>
+    <string name="hud_notification_title">Twelve Fifths HUD is on</string>
+    <string name="hud_notification_text">Live performance overlay is visible over other apps.</string>
+    <string name="hud_notification_stop">Stop HUD</string>
+</resources>
