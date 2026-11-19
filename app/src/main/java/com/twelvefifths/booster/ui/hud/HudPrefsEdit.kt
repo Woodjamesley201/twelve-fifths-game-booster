@@ -1,42 +1,23 @@
 package com.twelvefifths.booster.ui.hud
 
 import com.twelvefifths.booster.data.HudPreferences
-import com.twelvefifths.booster.metrics.MetricsSnapshot
+import com.twelvefifths.booster.hud.HudRow
+import com.twelvefifths.booster.hud.HudRows
+import com.twelvefifths.booster.metrics.MetricSupport
 import com.twelvefifths.booster.ui.format.Metric
-import com.twelvefifths.booster.ui.format.MetricDisplay
 import com.twelvefifths.booster.ui.format.MetricFormat
 
 /**
- * Pure HUD row model shared by the in-app preview and (optionally) the
- * platform overlay so both show identical, honest labels.
+ * Pure helpers for HUD settings: stat toggles, accent swatches, corner presets,
+ * and the in-app wording for Nathan's [HudRows.build] rows. Row selection and
+ * values always come from [HudRows.build] so the preview matches the overlay.
  *
  * Owner: Ui isaac.
  */
-data class HudRow(val metric: Metric, val label: String, val display: MetricDisplay) {
-    val text: String get() = MetricFormat.text(display)
-}
+object HudPrefsEdit {
+    val COMPACT_MAX_ROWS: Int get() = HudRows.COMPACT_MAX
 
-object HudRows {
-    const val COMPACT_MAX_ROWS = 4
-
-    /** Metrics in HUD order with whether the prefs enable them. */
-    fun enabled(prefs: HudPreferences): List<Metric> = buildList {
-        if (prefs.showFps) add(Metric.FPS)
-        if (prefs.showCpuTemp) add(Metric.CPU_TEMP)
-        if (prefs.showGpuTemp) add(Metric.GPU_TEMP)
-        if (prefs.showRam) add(Metric.RAM)
-        if (prefs.showCpuUsage) add(Metric.CPU_USAGE)
-        if (prefs.showGpuUsage) add(Metric.GPU_USAGE)
-        if (prefs.showPing) add(Metric.PING)
-        if (prefs.showVram) add(Metric.VRAM)
-    }
-
-    fun rows(snapshot: MetricsSnapshot, prefs: HudPreferences): List<HudRow> {
-        val all = enabled(prefs).map { m ->
-            HudRow(m, m.shortLabel, MetricFormat.display(m, snapshot))
-        }
-        return if (prefs.compact) all.take(COMPACT_MAX_ROWS) else all
-    }
+    fun enabled(prefs: HudPreferences): List<Metric> = Metric.hud.filter { isShown(prefs, it) }
 
     fun isShown(prefs: HudPreferences, metric: Metric): Boolean = when (metric) {
         Metric.FPS -> prefs.showFps
@@ -47,6 +28,7 @@ object HudRows {
         Metric.GPU_USAGE -> prefs.showGpuUsage
         Metric.PING -> prefs.showPing
         Metric.VRAM -> prefs.showVram
+        Metric.BATTERY_TEMP -> false
     }
 
     fun withShown(prefs: HudPreferences, metric: Metric, shown: Boolean): HudPreferences = when (metric) {
@@ -58,6 +40,27 @@ object HudRows {
         Metric.GPU_USAGE -> prefs.copy(showGpuUsage = shown)
         Metric.PING -> prefs.copy(showPing = shown)
         Metric.VRAM -> prefs.copy(showVram = shown)
+        Metric.BATTERY_TEMP -> prefs
+    }
+
+    /** Settings-screen title for a HUD stat (CPU temp row falls back to battery / thermal level). */
+    fun hudTitle(metric: Metric): String = when (metric) {
+        Metric.CPU_TEMP -> "Temperature (CPU → battery → thermal level)"
+        else -> metric.title
+    }
+
+    /** Label shown in the in-app preview. Ping is always labelled TCP. */
+    fun previewLabel(row: HudRow): String = when (row.key) {
+        HudRow.Key.PING -> "PING TCP"
+        else -> row.label
+    }
+
+    /** Value text for the preview: the real value, else the honest support label. */
+    fun previewValue(row: HudRow): String = when {
+        row.hasRealValue -> row.value!!.let { if (row.key == HudRow.Key.PING) "$it TCP" else it }
+        row.support == MetricSupport.UNSUPPORTED -> MetricFormat.UNSUPPORTED_LABEL
+        row.support == MetricSupport.NEEDS_PERMISSION -> MetricFormat.GRANT_LABEL
+        else -> row.statusText
     }
 
     /** Accent swatches offered in HUD settings (ARGB). */
@@ -73,10 +76,7 @@ object HudRows {
 
     enum class Corner { TOP_START, TOP_END, BOTTOM_START, BOTTOM_END }
 
-    /**
-     * Overlay x/y (px from top-start) for a corner preset. HUD height is an
-     * estimate; the user can drag the live overlay to fine-tune.
-     */
+    /** Overlay x/y (px from top-start) for a corner preset. Moves the live window too. */
     fun cornerPosition(
         corner: Corner,
         screenWidthPx: Int,

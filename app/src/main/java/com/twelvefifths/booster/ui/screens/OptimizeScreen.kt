@@ -33,6 +33,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Block
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.RemoveCircleOutline
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material3.Icon
@@ -59,6 +60,8 @@ import androidx.compose.ui.unit.dp
 import com.twelvefifths.booster.optimize.GameEntry
 import com.twelvefifths.booster.optimize.OptimizationProfile
 import com.twelvefifths.booster.optimize.OptimizationSession
+import com.twelvefifths.booster.optimize.SessionEndReason
+import com.twelvefifths.booster.optimize.SettingsShortcut
 import com.twelvefifths.booster.ui.components.AppIcon
 import com.twelvefifths.booster.ui.components.ProfileEditor
 import com.twelvefifths.booster.ui.components.ScreenTitle
@@ -110,6 +113,10 @@ fun OptimizeScreen(
     onLaunch: (GameEntry) -> Boolean,
     onGrantPermission: (PermissionKind) -> Unit,
     modifier: Modifier = Modifier,
+    canKillOtherApps: Boolean = true,
+    shortcuts: List<SettingsShortcut> = emptyList(),
+    onOpenShortcut: (SettingsShortcut) -> Unit = {},
+    onOpenAppInfo: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var ui by remember { mutableStateOf<OptimizeUiState>(OptimizeUiState.Idle) }
@@ -124,6 +131,8 @@ fun OptimizeScreen(
         closablePackages = closableApps.map { it.first }.toSet(),
         dndGranted = dndGranted,
         labelOf = labelOf,
+        canKillOtherApps = canKillOtherApps,
+        usageGranted = usageGranted,
     )
 
     fun optimize() {
@@ -220,6 +229,7 @@ fun OptimizeScreen(
             val right: @Composable (Modifier) -> Unit = { m ->
                 Column(m, verticalArrangement = Arrangement.spacedBy(14.dp)) {
                     PlanCard(plan)
+                    if (shortcuts.isNotEmpty()) ShortcutsCard(shortcuts, onOpenShortcut)
                     if (selectedGame != null && editingProfile) {
                         GlassPanel {
                             Column(Modifier.fillMaxWidth().padding(16.dp)) {
@@ -231,6 +241,9 @@ fun OptimizeScreen(
                                     closableApps = closableApps,
                                     dndGranted = dndGranted,
                                     onGrantPermission = onGrantPermission,
+                                    usageGranted = usageGranted,
+                                    canKillOtherApps = canKillOtherApps,
+                                    onOpenAppInfo = onOpenAppInfo,
                                 )
                             }
                         }
@@ -377,6 +390,21 @@ private fun PlanCard(plan: List<OptimizePlan.Step>) {
 }
 
 @Composable
+private fun ShortcutsCard(shortcuts: List<SettingsShortcut>, onOpen: (SettingsShortcut) -> Unit) {
+    GlassPanel {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionHeader("Shortcuts", subtitle = "Open the system screens yourself; nothing is switched for you")
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                shortcuts.forEach { sc -> SecondaryButton(sc.title, { onOpen(sc) }, icon = Icons.AutoMirrored.Outlined.OpenInNew) }
+            }
+            shortcuts.forEach { sc ->
+                Text("${sc.title}: ${sc.description}", style = BoosterTypography.bodyMedium, color = Charcoal.TextDim)
+            }
+        }
+    }
+}
+
+@Composable
 private fun PlanLine(icon: ImageVector, tint: Color, title: String, detail: String?) {
     Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(20.dp))
@@ -414,18 +442,27 @@ private fun ActiveSessionCard(
                 StatusPill("Active", Charcoal.Ok)
             }
             Text("WHAT ACTUALLY HAPPENED", style = BoosterTypography.labelSmall)
-            PlanLine(
-                Icons.Outlined.CheckCircle,
-                if (session.closedPackages.isEmpty()) Charcoal.TextDim else Charcoal.Ok,
-                if (session.closedPackages.isEmpty()) "No apps were closed" else "Closed ${session.closedPackages.size} background app(s)",
-                session.closedPackages.joinToString { labelOf(it) }.ifEmpty { null },
-            )
-            PlanLine(
-                Icons.Outlined.CheckCircle,
-                if (session.dndWasEnabledByUs) Charcoal.Ok else Charcoal.TextDim,
-                if (session.dndWasEnabledByUs) "Do Not Disturb turned on" else "Do Not Disturb not changed",
-                if (session.dndWasEnabledByUs) "Restored when you tap Restore." else null,
-            )
+            if (session.notes.isNotEmpty()) {
+                session.notes.forEach { note -> PlanLine(Icons.Outlined.CheckCircle, Charcoal.NeonBlue, note, null) }
+            } else {
+                PlanLine(
+                    Icons.Outlined.CheckCircle,
+                    if (session.closedPackages.isEmpty()) Charcoal.TextDim else Charcoal.Ok,
+                    when {
+                        !session.closeSupported && session.requestedClosePackages.isNotEmpty() ->
+                            "Closing apps isn't available on this Android version"
+                        session.closedPackages.isEmpty() -> "No apps were closed"
+                        else -> "Asked Android to close ${session.closedPackages.size} background app(s)"
+                    },
+                    session.closedPackages.joinToString { labelOf(it) }.ifEmpty { null },
+                )
+                PlanLine(
+                    Icons.Outlined.CheckCircle,
+                    if (session.dndWasEnabledByUs) Charcoal.Ok else Charcoal.TextDim,
+                    if (session.dndWasEnabledByUs) "Do Not Disturb turned on" else "Do Not Disturb not changed",
+                    if (session.dndWasEnabledByUs) "Restored when you tap Restore." else null,
+                )
+            }
             val before = session.before
             val ram = before?.let { MetricFormat.text(MetricFormat.display(Metric.RAM, it)) } ?: "Not captured"
             PlanLine(Icons.Outlined.CheckCircle, Charcoal.NeonBlue, "Before snapshot", "RAM $ram")
@@ -447,10 +484,18 @@ private fun RestoredCard(session: OptimizationSession, gameName: String, onDismi
                 Text("Done", style = BoosterTypography.labelLarge, color = Charcoal.NeonBlue, modifier = Modifier.clickable(onClick = onDismiss))
             }
             Text(
-                (if (session.dndWasEnabledByUs) "Do Not Disturb set back. " else "") +
-                    "Session lasted ${MetricFormat.duration((session.endedAtMs ?: session.startedAtMs) - session.startedAtMs)}.",
+                "Session lasted ${MetricFormat.duration((session.endedAtMs ?: session.startedAtMs) - session.startedAtMs)}" +
+                    when (session.endReason) {
+                        SessionEndReason.GAME_LEFT_FOREGROUND -> " · ended when the game left the screen."
+                        SessionEndReason.RECOVERED_AFTER_RESTART -> " · restored after the app restarted."
+                        else -> "."
+                    },
                 style = BoosterTypography.bodyMedium,
             )
+            session.notes.forEach { note ->
+                Text("• $note", style = BoosterTypography.bodyMedium, color = Charcoal.TextMuted)
+            }
+            Text("START → AT RESTORE", style = BoosterTypography.labelSmall)
             rows.forEach { r ->
                 Row {
                     Text(r.metric.shortLabel, style = BoosterTypography.labelLarge, color = Charcoal.TextMuted, modifier = Modifier.weight(1f))

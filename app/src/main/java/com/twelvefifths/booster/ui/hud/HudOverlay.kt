@@ -28,7 +28,9 @@ import com.twelvefifths.booster.metrics.MetricsSnapshot
 import com.twelvefifths.booster.ui.components.GraphSeries
 import com.twelvefifths.booster.ui.components.LineGraph
 import com.twelvefifths.booster.ui.format.Metric
-import com.twelvefifths.booster.ui.format.MetricDisplay
+import com.twelvefifths.booster.hud.HudRow
+import com.twelvefifths.booster.hud.HudRows
+import com.twelvefifths.booster.metrics.MetricSupport
 import com.twelvefifths.booster.ui.graph.GraphMath
 import com.twelvefifths.booster.ui.graph.MetricHistory
 import com.twelvefifths.booster.ui.theme.BoosterTypography
@@ -41,7 +43,8 @@ import com.twelvefifths.booster.ui.theme.glassBrush
  * never puts a Compose blur stack over other apps. Glass = fill at the user's
  * opacity + veil + accent rim. No RenderEffect.
  *
- * Compact: up to four rows, tight. Expanded: every enabled row plus a RAM
+ * Rows come from [HudRows.build] (same as the overlay). Compact: only rows
+ * with a live value, up to four. Expanded: every enabled row plus a RAM
  * sparkline when [history] has real RAM samples.
  *
  * Owner: Ui isaac.
@@ -56,7 +59,7 @@ fun HudOverlay(
     val shape = RoundedCornerShape(if (prefs.compact) 16.dp else 20.dp)
     val accent = Color(prefs.accentArgb)
     val fill = Charcoal.Night.copy(alpha = prefs.opacity.coerceIn(0.35f, 1f))
-    val rows = HudRows.rows(snapshot, prefs)
+    val rows = HudRows.build(snapshot, prefs)
     Column(
         modifier = modifier
             .width(prefs.widthDp.coerceIn(140, 420).dp)
@@ -73,7 +76,11 @@ fun HudOverlay(
             Text("TWELVE FIFTHS", style = BoosterTypography.labelSmall.copy(fontSize = 9.sp), color = accent)
         }
         if (rows.isEmpty()) {
-            Text("No stats selected", style = BoosterTypography.bodyMedium, color = Charcoal.TextDim)
+            Text(
+                if (prefs.compact && HudPrefsEdit.enabled(prefs).isNotEmpty()) "No live readings yet" else "No stats selected",
+                style = BoosterTypography.bodyMedium,
+                color = Charcoal.TextDim,
+            )
         }
         rows.forEach { row -> HudRowView(row, accent, prefs.compact) }
         if (!prefs.compact && history != null && prefs.showRam && history.hasAny(Metric.RAM)) {
@@ -91,25 +98,26 @@ fun HudOverlay(
 
 @Composable
 private fun HudRowView(row: HudRow, accent: Color, compact: Boolean) {
-    val valueColor = when (row.display) {
-        is MetricDisplay.Value -> Charcoal.Text
-        is MetricDisplay.NeedsPermission -> Charcoal.NeonPurple
+    val valueColor = when {
+        row.hasRealValue -> Charcoal.Text
+        row.support == MetricSupport.NEEDS_PERMISSION -> Charcoal.NeonPurple
         else -> Charcoal.TextDim
     }
-    val valueStyle = when (row.display) {
-        is MetricDisplay.Value -> BoosterTypography.labelLarge.copy(fontSize = if (compact) 12.sp else 13.sp)
-        else -> BoosterTypography.labelSmall.copy(letterSpacing = 0.sp)
+    val valueStyle = if (row.hasRealValue) {
+        BoosterTypography.labelLarge.copy(fontSize = if (compact) 12.sp else 13.sp)
+    } else {
+        BoosterTypography.labelSmall.copy(letterSpacing = 0.sp)
     }
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
         Text(
-            row.label,
+            HudPrefsEdit.previewLabel(row),
             style = BoosterTypography.labelSmall.copy(fontSize = 10.sp),
             color = accent.copy(alpha = 0.85f),
             modifier = Modifier.width(64.dp),
             maxLines = 1,
         )
         Text(
-            row.text,
+            HudPrefsEdit.previewValue(row),
             style = valueStyle,
             color = valueColor,
             textAlign = TextAlign.End,

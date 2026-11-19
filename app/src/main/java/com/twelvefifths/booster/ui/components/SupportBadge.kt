@@ -63,6 +63,7 @@ fun MetricValue(
                 overflow = TextOverflow.Ellipsis,
             )
             MetricDisplay.Waiting -> Text(MetricFormat.WAITING_LABEL, style = valueStyle, color = Charcoal.TextDim)
+            is MetricDisplay.Status -> Text(d.text, style = BoosterTypography.titleMedium, color = Charcoal.Warn)
             is MetricDisplay.NeedsPermission -> PillButton(
                 text = MetricFormat.GRANT_LABEL,
                 onClick = { onGrant(d.permission) },

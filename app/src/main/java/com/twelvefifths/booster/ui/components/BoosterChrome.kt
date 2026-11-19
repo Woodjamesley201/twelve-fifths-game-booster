@@ -27,6 +27,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -78,6 +79,8 @@ fun BoosterChrome(
     destination: AppDestination,
     onNavigate: (AppDestination) -> Unit,
     modifier: Modifier = Modifier,
+    message: String? = null,
+    onDismissMessage: () -> Unit = {},
     content: @Composable (AppDestination) -> Unit,
 ) {
     BoxWithConstraints(
@@ -115,6 +118,47 @@ fun BoosterChrome(
                 body(Modifier.weight(1f).fillMaxWidth())
                 BottomBar(destination, onNavigate)
             }
+        }
+        MessageBanner(
+            message,
+            onDismissMessage,
+            Modifier
+                .align(Alignment.BottomCenter)
+                .windowInsetsPadding(WindowInsets.safeDrawing)
+                .padding(bottom = if (wide) 24.dp else 96.dp, start = 24.dp, end = 24.dp),
+        )
+    }
+}
+
+/** Glass toast for short results (e.g. why the HUD didn't start). Auto-hides after 5 s. */
+@Composable
+private fun MessageBanner(message: String?, onDismiss: () -> Unit, modifier: Modifier) {
+    androidx.compose.runtime.LaunchedEffect(message) {
+        if (message != null) {
+            kotlinx.coroutines.delay(5_000L)
+            onDismiss()
+        }
+    }
+    androidx.compose.animation.AnimatedVisibility(
+        visible = message != null,
+        enter = fadeIn() + slideInVertically { it / 2 },
+        exit = fadeOut() + slideOutVertically { it / 2 },
+        modifier = modifier,
+    ) {
+        val shape = RoundedCornerShape(18.dp)
+        Row(
+            Modifier
+                .widthIn(max = 560.dp)
+                .clip(shape)
+                .background(Charcoal.NightHigh, shape)
+                .border(1.dp, Charcoal.NeonBlueSoft, shape)
+                .clickable(onClick = onDismiss)
+                .padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(message.orEmpty(), style = BoosterTypography.bodyLarge, modifier = Modifier.weight(1f, fill = false))
+            Spacer(Modifier.width(14.dp))
+            Text("OK", style = BoosterTypography.labelLarge, color = Charcoal.NeonBlue)
         }
     }
 }

@@ -86,6 +86,7 @@ fun CheckRow(
     modifier: Modifier = Modifier,
     subtitle: String? = null,
     leading: (@Composable () -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     Row(
         modifier.fillMaxWidth().padding(vertical = 2.dp),
@@ -106,6 +107,7 @@ fun CheckRow(
             Text(title, style = BoosterTypography.bodyLarge, maxLines = 1)
             if (subtitle != null) Text(subtitle, style = BoosterTypography.bodyMedium, color = Charcoal.TextDim, maxLines = 1)
         }
+        trailing?.invoke()
     }
 }
 

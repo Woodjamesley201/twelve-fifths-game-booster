@@ -61,13 +61,14 @@ import com.twelvefifths.booster.ui.format.MetricFormat
 import com.twelvefifths.booster.ui.format.PermissionKind
 import com.twelvefifths.booster.ui.graph.MetricHistory
 import com.twelvefifths.booster.ui.hud.HudOverlay
-import com.twelvefifths.booster.ui.hud.HudRows
+import com.twelvefifths.booster.ui.hud.HudPrefsEdit
 import com.twelvefifths.booster.ui.theme.BoosterTypography
 import com.twelvefifths.booster.ui.theme.Charcoal
 import com.twelvefifths.booster.ui.theme.ChoiceChip
 import com.twelvefifths.booster.ui.theme.GlassPanel
 import com.twelvefifths.booster.ui.theme.PillButton
 import kotlin.math.roundToInt
+import kotlinx.coroutines.launch
 
 /**
  * HUD settings with a live preview over a mock game frame. Sliders edit a
@@ -83,8 +84,13 @@ fun HudSettingsScreen(
     overlayGranted: Boolean,
     notificationsGranted: Boolean,
     hudRunning: Boolean,
+    overlayVisible: Boolean,
+    pingTarget: String,
     onPrefsChange: (HudPreferences) -> Unit,
     onToggleHud: () -> Unit,
+    onShowOverlay: () -> Unit,
+    onSetPingTarget: suspend (String) -> Boolean,
+    onResetPingTarget: () -> Unit,
     onGrantPermission: (PermissionKind) -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -99,9 +105,10 @@ fun HudSettingsScreen(
         val preview: @Composable (Modifier) -> Unit = { m -> PreviewCard(draft, snapshot, metricHistory, m) }
         val controls: @Composable (Modifier) -> Unit = { m ->
             Column(m, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                RunCard(hudRunning, overlayGranted, notificationsGranted, onToggleHud, onGrantPermission)
+                RunCard(hudRunning, overlayVisible, overlayGranted, notificationsGranted, onToggleHud, onShowOverlay, onGrantPermission)
                 LayoutCard(draft, onDraft = { draft = it }, onCommit = { commit(it) })
                 StatsCard(draft, snapshot, onCommit = { commit(it) })
+                PingTargetCard(pingTarget, snapshot, onSetPingTarget, onResetPingTarget)
             }
         }
         Column(
@@ -114,7 +121,16 @@ fun HudSettingsScreen(
             ScreenTitle(
                 title = "HUD",
                 subtitle = "Always-on-top overlay · drag it on screen to fine-tune its position",
-                trailing = { StatusPill(if (hudRunning) "Running" else "Stopped", if (hudRunning) Charcoal.Ok else Charcoal.TextDim) },
+                trailing = {
+                    StatusPill(
+                        when {
+                            hudRunning && !overlayVisible -> "Running · hidden"
+                            hudRunning -> "Running"
+                            else -> "Stopped"
+                        },
+                        if (hudRunning) Charcoal.Ok else Charcoal.TextDim,
+                    )
+                },
             )
             if (wide) {
                 Row(horizontalArrangement = Arrangement.spacedBy(16.dp)) {
@@ -211,9 +227,11 @@ private fun MockScenery() {
 @Composable
 private fun RunCard(
     hudRunning: Boolean,
+    overlayVisible: Boolean,
     overlayGranted: Boolean,
     notificationsGranted: Boolean,
     onToggleHud: () -> Unit,
+    onShowOverlay: () -> Unit,
     onGrantPermission: (PermissionKind) -> Unit,
 ) {
     GlassPanel(accent = if (hudRunning) Charcoal.Ok else Charcoal.NeonBlue) {
@@ -222,7 +240,8 @@ private fun RunCard(
                 title = "Show HUD over games",
                 subtitle = when {
                     !overlayGranted -> "Needs Display over other apps."
-                    hudRunning -> "Running in a foreground service. Stop it here or from its notification."
+                    hudRunning && !overlayVisible -> "Running, but hidden from the notification."
+                    hudRunning -> "Running in a foreground service. Stop it here, from its notification, or the Game HUD tile."
                     else -> "Starts a small foreground service that draws the overlay."
                 },
                 checked = hudRunning,
@@ -234,10 +253,13 @@ private fun RunCard(
                     null
                 },
             )
+            if (hudRunning && !overlayVisible) {
+                Row(Modifier.padding(bottom = 6.dp)) { PillButton("Show HUD", onShowOverlay, accent = Charcoal.NeonBlue) }
+            }
             if (overlayGranted && !notificationsGranted) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(
-                        "Allow notifications so the HUD's Stop control is visible.",
+                        "Optional: allow notifications to get Hide / Stop controls. Without it, use this toggle or the Game HUD tile.",
                         style = BoosterTypography.bodyMedium,
                         modifier = Modifier.weight(1f),
                     )
@@ -245,7 +267,7 @@ private fun RunCard(
                 }
             }
             Text(
-                "Android has no system-wide hotkey for third-party apps, so toggle the HUD here or from its notification.",
+                "Android has no system-wide hotkey for third-party apps. Add the \"Game HUD\" quick-settings tile for a one-swipe toggle.",
                 style = BoosterTypography.bodyMedium,
                 color = Charcoal.TextDim,
                 modifier = Modifier.padding(top = 6.dp),
@@ -266,7 +288,7 @@ private fun LayoutCard(draft: HudPreferences, onDraft: (HudPreferences) -> Unit,
                 ChoiceChip("Expanded", !draft.compact, { onCommit(draft.copy(compact = false)) }, Modifier.weight(1f), icon = Icons.Outlined.ViewAgenda)
             }
             Text(
-                if (draft.compact) "Up to ${HudRows.COMPACT_MAX_ROWS} stats in a tight panel." else "Every selected stat, plus a RAM trend line.",
+                if (draft.compact) "Only stats with a live value, up to ${HudPrefsEdit.COMPACT_MAX_ROWS}. Tap the overlay to switch." else "Every selected stat, plus a RAM trend line.",
                 style = BoosterTypography.bodyMedium,
                 color = Charcoal.TextDim,
             )
@@ -289,38 +311,38 @@ private fun LayoutCard(draft: HudPreferences, onDraft: (HudPreferences) -> Unit,
             )
             Text("Accent color", style = BoosterTypography.bodyLarge)
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                HudRows.accentSwatches.forEach { argb ->
+                HudPrefsEdit.accentSwatches.forEach { argb ->
                     Swatch(Color(argb), selected = draft.accentArgb == argb) { onCommit(draft.copy(accentArgb = argb)) }
                 }
             }
             Text("Position", style = BoosterTypography.bodyLarge)
             val corners = listOf(
-                HudRows.Corner.TOP_START to "Top left",
-                HudRows.Corner.TOP_END to "Top right",
-                HudRows.Corner.BOTTOM_START to "Bottom left",
-                HudRows.Corner.BOTTOM_END to "Bottom right",
+                HudPrefsEdit.Corner.TOP_START to "Top left",
+                HudPrefsEdit.Corner.TOP_END to "Top right",
+                HudPrefsEdit.Corner.BOTTOM_START to "Bottom left",
+                HudPrefsEdit.Corner.BOTTOM_END to "Bottom right",
             )
             val screenW = with(density) { config.screenWidthDp.dp.roundToPx() }
             val screenH = with(density) { config.screenHeightDp.dp.roundToPx() }
             val hudW = with(density) { draft.widthDp.dp.roundToPx() }
-            val rowsShown = HudRows.enabled(draft).size.let { if (draft.compact) minOf(it, HudRows.COMPACT_MAX_ROWS) else it }
+            val rowsShown = HudPrefsEdit.enabled(draft).size.let { if (draft.compact) minOf(it, HudPrefsEdit.COMPACT_MAX_ROWS) else it }
             val hudH = with(density) { (36 + rowsShown * 20 + if (draft.compact) 0 else 36).dp.roundToPx() }
             val margin = with(density) { 16.dp.roundToPx() }
             val currentCorner = corners.firstOrNull { (c, _) ->
-                HudRows.cornerPosition(c, screenW, screenH, hudW, hudH, margin) == (draft.posX to draft.posY)
+                HudPrefsEdit.cornerPosition(c, screenW, screenH, hudW, hudH, margin) == (draft.posX to draft.posY)
             }?.first
             corners.chunked(2).forEach { pair ->
                 Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                     pair.forEach { (corner, label) ->
                         ChoiceChip(label, currentCorner == corner, {
-                            val (x, y) = HudRows.cornerPosition(corner, screenW, screenH, hudW, hudH, margin)
+                            val (x, y) = HudPrefsEdit.cornerPosition(corner, screenW, screenH, hudW, hudH, margin)
                             onCommit(draft.copy(posX = x, posY = y))
                         }, Modifier.weight(1f))
                     }
                 }
             }
             Text(
-                "Presets apply the next time the HUD starts; drag the overlay to move it while it runs.",
+                "Presets move the live HUD too. Drag the overlay to fine-tune, or its ◢ corner to resize.",
                 style = BoosterTypography.bodyMedium,
                 color = Charcoal.TextDim,
             )
@@ -349,16 +371,77 @@ private fun StatsCard(draft: HudPreferences, snapshot: MetricsSnapshot, onCommit
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             SectionHeader("Stats on the HUD", subtitle = "Unsupported stats show their label, never a made-up number")
             Spacer(Modifier.height(6.dp))
-            Metric.entries.forEach { metric ->
+            Metric.hud.forEach { metric ->
                 ToggleRow(
-                    title = metric.title,
+                    title = HudPrefsEdit.hudTitle(metric),
                     subtitle = null,
-                    checked = HudRows.isShown(draft, metric),
-                    onCheckedChange = { onCommit(HudRows.withShown(draft, metric, it)) },
+                    checked = HudPrefsEdit.isShown(draft, metric),
+                    onCheckedChange = { onCommit(HudPrefsEdit.withShown(draft, metric, it)) },
                     trailingExtra = {
                         SupportPill(MetricFormat.support(metric, snapshot), Modifier.padding(end = 10.dp))
                     },
                 )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PingTargetCard(
+    current: String,
+    snapshot: MetricsSnapshot,
+    onSet: suspend (String) -> Boolean,
+    onReset: () -> Unit,
+) {
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var text by remember(current) { mutableStateOf(current) }
+    var error by remember { mutableStateOf<String?>(null) }
+    var saved by remember { mutableStateOf(false) }
+    GlassPanel {
+        Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            SectionHeader(
+                "Latency check (TCP)",
+                subtitle = "Apps can't send ICMP ping, so latency is a timed TCP connect to this host:port.",
+            )
+            androidx.compose.material3.OutlinedTextField(
+                value = text,
+                onValueChange = {
+                    text = it
+                    error = null
+                    saved = false
+                },
+                singleLine = true,
+                label = { Text("TCP target (host:port)") },
+                placeholder = { Text("8.8.8.8:443") },
+                isError = error != null,
+                supportingText = {
+                    Text(
+                        error ?: if (saved) "Saved. The next sample uses it." else "Example: 1.1.1.1:443 or a game server's host:port.",
+                        color = if (error != null) Charcoal.Danger else Charcoal.TextDim,
+                    )
+                },
+                modifier = Modifier.fillMaxWidth(),
+                colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                    focusedBorderColor = Charcoal.NeonBlue,
+                    unfocusedBorderColor = Charcoal.Line,
+                    cursorColor = Charcoal.NeonBlue,
+                ),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                com.twelvefifths.booster.ui.theme.PrimaryButton("Save", {
+                    scope.launch {
+                        val ok = onSet(text.trim())
+                        if (ok) saved = true else error = "Enter a valid host or host:port (port 1–65535)."
+                    }
+                })
+                com.twelvefifths.booster.ui.theme.SecondaryButton("Reset to default", {
+                    onReset()
+                    saved = false
+                    error = null
+                })
+                Spacer(Modifier.weight(1f))
+                val d = MetricFormat.display(Metric.PING, snapshot)
+                Text(MetricFormat.text(d), style = BoosterTypography.labelLarge, color = Charcoal.NeonBlue)
             }
         }
     }

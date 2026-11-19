@@ -24,6 +24,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.twelvefifths.booster.Permissions
 import com.twelvefifths.booster.data.BoosterStore
 import com.twelvefifths.booster.hud.HudService
+import com.twelvefifths.booster.ui.format.HudStartText
+import com.twelvefifths.booster.optimize.SettingsShortcuts
+import com.twelvefifths.booster.optimize.PermissionChecker
+import com.twelvefifths.booster.optimize.OptimizerCapabilities
+import com.twelvefifths.booster.optimize.BoosterPermission
+import com.twelvefifths.booster.metrics.PingTarget
+import com.twelvefifths.booster.hud.HudStartResult
 import com.twelvefifths.booster.metrics.MetricsSnapshot
 import com.twelvefifths.booster.metrics.MetricsSource
 import com.twelvefifths.booster.optimize.ClosableApps
@@ -36,7 +43,6 @@ import com.twelvefifths.booster.optimize.Optimizer
 import com.twelvefifths.booster.ui.components.BoosterChrome
 import com.twelvefifths.booster.ui.components.rememberMetricHistory
 import com.twelvefifths.booster.ui.format.PermissionKind
-import com.twelvefifths.booster.ui.hud.HudRunningState
 import com.twelvefifths.booster.ui.screens.DashboardScreen
 import com.twelvefifths.booster.ui.screens.HudSettingsScreen
 import com.twelvefifths.booster.ui.screens.LibraryScreen
@@ -78,39 +84,53 @@ fun BoosterApp(
     val activeSession by optimizer.activeSession.collectAsStateWithLifecycle(null)
     val foregroundPackage by foregroundFlow.collectAsStateWithLifecycle(null)
     val metricHistory = rememberMetricHistory(snapshot)
+    val hudRunning by HudService.running.collectAsStateWithLifecycle()
+    val overlayVisible by HudService.overlayVisible.collectAsStateWithLifecycle()
+    val pingTarget by store.pingTarget.collectAsStateWithLifecycle(PingTarget.DEFAULT)
+    val permissionChecker = remember(context) { PermissionChecker(context) }
 
     var destination by remember { mutableStateOf(AppDestination.Dashboard) }
-    var overlayGranted by remember { mutableStateOf(Permissions.canDrawOverlays(context)) }
-    var usageGranted by remember { mutableStateOf(foregroundAppDetector.hasUsageAccess()) }
-    var notificationsGranted by remember { mutableStateOf(Permissions.hasNotificationPermission(context)) }
-    var dndGranted by remember { mutableStateOf(Permissions.hasDndAccess(context)) }
-    var hudRunning by remember { mutableStateOf(HudRunningState.isRunning(context)) }
+    var permissionStates by remember { mutableStateOf(permissionChecker.all()) }
+    var notificationAsked by remember { mutableStateOf(false) }
+    var banner by remember { mutableStateOf<String?>(null) }
+    fun granted(p: BoosterPermission) = permissionStates.firstOrNull { it.permission == p }?.granted == true
+    val overlayGranted = granted(BoosterPermission.OVERLAY)
+    val usageGranted = granted(BoosterPermission.USAGE_ACCESS)
+    val notificationsGranted = granted(BoosterPermission.NOTIFICATIONS)
+    val dndGranted = granted(BoosterPermission.DND_POLICY)
     var selectedGame by remember { mutableStateOf<GameEntry?>(null) }
     var profile by remember { mutableStateOf(OptimizationProfile(gamePackage = "")) }
     var closable by remember { mutableStateOf<List<Pair<String, String>>>(emptyList()) }
 
     val notificationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
-    ) { granted -> notificationsGranted = granted }
+    ) { _ -> permissionStates = permissionChecker.all() }
 
     fun refreshPermissions() {
-        overlayGranted = Permissions.canDrawOverlays(context)
-        usageGranted = foregroundAppDetector.hasUsageAccess()
-        notificationsGranted = Permissions.hasNotificationPermission(context)
-        dndGranted = Permissions.hasDndAccess(context)
-        hudRunning = HudRunningState.isRunning(context)
+        permissionStates = permissionChecker.all()
     }
 
-    fun requestPermission(kind: PermissionKind) {
-        when (kind) {
-            PermissionKind.OVERLAY -> Permissions.openOverlaySettings(context)
-            PermissionKind.USAGE_ACCESS -> Permissions.openUsageAccessSettings(context)
-            PermissionKind.DND -> Permissions.openDndAccessSettings(context)
-            PermissionKind.NOTIFICATIONS -> if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-            }
+    fun request(p: BoosterPermission) {
+        val state = permissionChecker.state(p)
+        val runtime = state.runtimePermission
+        if (runtime != null && !state.granted && !notificationAsked) {
+            // First ask uses the runtime dialog; later taps open Settings
+            // (Android stops showing the dialog after repeated denials).
+            notificationAsked = true
+            notificationLauncher.launch(runtime)
+        } else {
+            permissionChecker.openSettings(context, p)
         }
     }
+
+    fun requestPermission(kind: PermissionKind) = request(
+        when (kind) {
+            PermissionKind.OVERLAY -> BoosterPermission.OVERLAY
+            PermissionKind.USAGE_ACCESS -> BoosterPermission.USAGE_ACCESS
+            PermissionKind.DND -> BoosterPermission.DND_POLICY
+            PermissionKind.NOTIFICATIONS -> BoosterPermission.NOTIFICATIONS
+        },
+    )
 
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
@@ -144,35 +164,21 @@ fun BoosterApp(
 
     if (!loadedPrefs.onboardingDone) {
         PermissionsOnboardingScreen(
-            overlayGranted = overlayGranted,
-            usageGranted = usageGranted,
-            notificationsGranted = notificationsGranted,
-            dndGranted = dndGranted,
-            onRequestOverlay = { requestPermission(PermissionKind.OVERLAY) },
-            onRequestUsage = { requestPermission(PermissionKind.USAGE_ACCESS) },
-            onRequestNotifications = { requestPermission(PermissionKind.NOTIFICATIONS) },
-            onRequestDnd = { requestPermission(PermissionKind.DND) },
+            permissions = permissionStates,
+            onRequest = { request(it) },
             onContinue = { scope.launch { store.setOnboardingDone(true) } },
         )
         return
     }
 
+    fun startHud() {
+        val result = HudService.start(context)
+        banner = HudStartText.message(result)
+        if (result == HudStartResult.NEEDS_OVERLAY_PERMISSION) request(BoosterPermission.OVERLAY)
+    }
+
     fun toggleHud() {
-        if (hudRunning) {
-            HudService.stop(context)
-            hudRunning = false
-        } else {
-            if (!overlayGranted) {
-                Permissions.openOverlaySettings(context)
-                return
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && !notificationsGranted) {
-                notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                return
-            }
-            HudService.start(context)
-            hudRunning = true
-        }
+        if (hudRunning) HudService.stop(context) else startHud()
     }
 
     suspend fun startOptimize(game: GameEntry): Result<OptimizationSession> {
@@ -183,21 +189,28 @@ fun BoosterApp(
         return result
     }
 
+    val canKillOtherApps = OptimizerCapabilities.canKillOtherApps
+    val openAppInfo: (String) -> Unit = { pkg -> SettingsShortcuts.open(context, SettingsShortcuts.appInfo(pkg)) }
+    val shortcuts = remember(selectedGame?.packageName) {
+        val pkg = selectedGame?.packageName
+        listOfNotNull(
+            SettingsShortcuts.batterySaver(),
+            SettingsShortcuts.gameMode(context, pkg),
+            pkg?.let { SettingsShortcuts.appInfo(it, title = "Game app info") },
+        ).distinctBy { it.id }
+    }
+
     BoosterChrome(
         destination = destination,
         onNavigate = { destination = it },
+        message = banner,
+        onDismissMessage = { banner = null },
     ) { dest ->
         val body = Modifier.fillMaxSize()
         when (dest) {
             AppDestination.Onboarding, AppDestination.Permissions -> PermissionsOnboardingScreen(
-                overlayGranted = overlayGranted,
-                usageGranted = usageGranted,
-                notificationsGranted = notificationsGranted,
-                dndGranted = dndGranted,
-                onRequestOverlay = { requestPermission(PermissionKind.OVERLAY) },
-                onRequestUsage = { requestPermission(PermissionKind.USAGE_ACCESS) },
-                onRequestNotifications = { requestPermission(PermissionKind.NOTIFICATIONS) },
-                onRequestDnd = { requestPermission(PermissionKind.DND) },
+                permissions = permissionStates,
+                onRequest = { request(it) },
                 onContinue = null,
                 modifier = body,
             )
@@ -248,6 +261,9 @@ fun BoosterApp(
                 },
                 onGrantPermission = { requestPermission(it) },
                 modifier = body,
+                usageGranted = usageGranted,
+                canKillOtherApps = canKillOtherApps,
+                onOpenAppInfo = openAppInfo,
             )
             AppDestination.Optimize -> OptimizeScreen(
                 games = games,
@@ -265,6 +281,12 @@ fun BoosterApp(
                 foregroundPackage = foregroundPackage,
                 onOptimize = { game -> startOptimize(game) },
                 onRestore = { optimizer.endSession() },
+                canKillOtherApps = canKillOtherApps,
+                shortcuts = shortcuts,
+                onOpenShortcut = { sc ->
+                    if (!SettingsShortcuts.open(context, sc)) banner = "Couldn't open ${sc.title}."
+                },
+                onOpenAppInfo = openAppInfo,
                 onLaunch = { game ->
                     val ok = gameLibrary.launchGame(game.packageName)
                     if (ok) scope.launch { gameLibrary.markPlayed(game.packageName) }
@@ -280,8 +302,30 @@ fun BoosterApp(
                 overlayGranted = overlayGranted,
                 notificationsGranted = notificationsGranted,
                 hudRunning = hudRunning,
-                onPrefsChange = { next -> scope.launch { store.setHudPreferences(next) } },
+                overlayVisible = overlayVisible,
+                pingTarget = pingTarget.label,
+                onPrefsChange = { next ->
+                    val base = loadedPrefs
+                    scope.launch {
+                        store.updateHudPreferences { cur ->
+                            // Keep a position/width the user dragged on the live overlay
+                            // unless this edit changed it.
+                            val moved = next.posX != base.posX || next.posY != base.posY
+                            val resized = next.widthDp != base.widthDp
+                            val compactChanged = next.compact != base.compact
+                            next.copy(
+                                posX = if (moved) next.posX else cur.posX,
+                                posY = if (moved) next.posY else cur.posY,
+                                widthDp = if (resized) next.widthDp else cur.widthDp,
+                                compact = if (compactChanged) next.compact else cur.compact,
+                            )
+                        }
+                    }
+                },
                 onToggleHud = { toggleHud() },
+                onShowOverlay = { startHud() },
+                onSetPingTarget = { input -> store.setPingTarget(input) != null },
+                onResetPingTarget = { scope.launch { store.resetPingTarget() } },
                 onGrantPermission = { requestPermission(it) },
                 modifier = body,
             )

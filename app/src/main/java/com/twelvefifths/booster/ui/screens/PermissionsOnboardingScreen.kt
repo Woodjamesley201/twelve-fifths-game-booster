@@ -41,7 +41,8 @@ import androidx.compose.ui.unit.dp
 import com.twelvefifths.booster.ui.components.AdaptiveGrid
 import com.twelvefifths.booster.ui.components.StatusPill
 import com.twelvefifths.booster.ui.components.gridColumns
-import com.twelvefifths.booster.ui.format.PermissionKind
+import com.twelvefifths.booster.optimize.BoosterPermission
+import com.twelvefifths.booster.optimize.PermissionState
 import com.twelvefifths.booster.ui.theme.BoosterTypography
 import com.twelvefifths.booster.ui.theme.Charcoal
 import com.twelvefifths.booster.ui.theme.GlassPanel
@@ -57,7 +58,7 @@ import com.twelvefifths.booster.ui.theme.appBackdrop
  * Owner: Ui isaac.
  */
 data class PermissionItem(
-    val kind: PermissionKind,
+    val permission: BoosterPermission,
     val title: String,
     val why: String,
     val granted: Boolean,
@@ -66,60 +67,37 @@ data class PermissionItem(
     val notApplicable: Boolean = false,
 )
 
-fun permissionItems(
-    overlayGranted: Boolean,
-    usageGranted: Boolean,
-    notificationsGranted: Boolean,
-    dndGranted: Boolean,
-    notificationsRuntime: Boolean,
-): List<PermissionItem> = listOf(
-    PermissionItem(
-        PermissionKind.OVERLAY, "Display over other apps",
-        "Draws the HUD on top of your game.", overlayGranted, required = true, icon = Icons.Outlined.Layers,
-    ),
-    PermissionItem(
-        PermissionKind.NOTIFICATIONS, "Notifications",
-        if (notificationsRuntime) "Shows the HUD's ongoing notification with a Stop button."
-        else "Not needed on this Android version.",
-        notificationsGranted, required = true, icon = Icons.Outlined.Notifications,
-        notApplicable = !notificationsRuntime,
-    ),
-    PermissionItem(
-        PermissionKind.USAGE_ACCESS, "Usage access",
-        "Detects which game is in the foreground. Android does not let it read other apps' FPS.",
-        usageGranted, required = false, icon = Icons.Outlined.BarChart,
-    ),
-    PermissionItem(
-        PermissionKind.DND, "Do Not Disturb access",
-        "Optional: silences notifications during a boost and restores them afterwards.",
-        dndGranted, required = false, icon = Icons.Outlined.DoNotDisturbOn,
-    ),
-)
+private fun BoosterPermission.icon(): ImageVector = when (this) {
+    BoosterPermission.OVERLAY -> Icons.Outlined.Layers
+    BoosterPermission.USAGE_ACCESS -> Icons.Outlined.BarChart
+    BoosterPermission.DND_POLICY -> Icons.Outlined.DoNotDisturbOn
+    BoosterPermission.NOTIFICATIONS -> Icons.Outlined.Notifications
+}
+
+/** Copy + status from Nathan's [PermissionState]; the reason text is his. */
+fun PermissionState.toItem(): PermissionItem {
+    val notifPreT = permission == BoosterPermission.NOTIFICATIONS && runtimePermission == null && granted
+    return PermissionItem(
+        permission = permission,
+        title = title,
+        why = if (notifPreT) "Not needed on this Android version." else reason,
+        granted = granted,
+        required = required,
+        icon = permission.icon(),
+        notApplicable = notifPreT,
+    )
+}
 
 @Composable
 fun PermissionsOnboardingScreen(
-    overlayGranted: Boolean,
-    usageGranted: Boolean,
-    notificationsGranted: Boolean,
-    dndGranted: Boolean,
-    onRequestOverlay: () -> Unit,
-    onRequestUsage: () -> Unit,
-    onRequestNotifications: () -> Unit,
-    onRequestDnd: () -> Unit,
+    permissions: List<PermissionState>,
+    onRequest: (BoosterPermission) -> Unit,
     onContinue: (() -> Unit)?,
     modifier: Modifier = Modifier,
-    notificationsRuntime: Boolean = android.os.Build.VERSION.SDK_INT >= 33,
     isOnboarding: Boolean = onContinue != null,
 ) {
-    val items = permissionItems(overlayGranted, usageGranted, notificationsGranted, dndGranted, notificationsRuntime)
-    val request: (PermissionKind) -> Unit = { kind ->
-        when (kind) {
-            PermissionKind.OVERLAY -> onRequestOverlay()
-            PermissionKind.USAGE_ACCESS -> onRequestUsage()
-            PermissionKind.NOTIFICATIONS -> onRequestNotifications()
-            PermissionKind.DND -> onRequestDnd()
-        }
-    }
+    val items = permissions.map { it.toItem() }
+    val request: (BoosterPermission) -> Unit = onRequest
     val grantedCount = items.count { it.granted }
     BoxWithConstraints(
         modifier
@@ -155,7 +133,7 @@ fun PermissionsOnboardingScreen(
                 Text("Permissions refresh automatically when you return from Settings.", style = BoosterTypography.bodyMedium)
             }
             StatusPill("$grantedCount of ${items.size} granted", if (grantedCount == items.size) Charcoal.Ok else Charcoal.NeonBlue)
-            AdaptiveGrid(items, columns = cols) { item, m -> PermissionCard(item, { request(item.kind) }, m) }
+            AdaptiveGrid(items, columns = cols) { item, m -> PermissionCard(item, { request(item.permission) }, m) }
             GlassPanel {
                 Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text("What Android does not allow", style = BoosterTypography.titleMedium)

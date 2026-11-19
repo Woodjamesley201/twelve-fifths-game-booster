@@ -131,9 +131,17 @@ fun DashboardScreen(
             }
 
             SectionHeader("Sensors", subtitle = "What this Android build exposes to an unprivileged app")
-            val tiles = listOf(Metric.CPU_TEMP, Metric.GPU_TEMP, Metric.CPU_USAGE, Metric.GPU_USAGE, Metric.PING, Metric.VRAM)
+            val tiles: List<Metric?> = listOf(Metric.CPU_TEMP, Metric.GPU_TEMP, Metric.BATTERY_TEMP, null, Metric.CPU_USAGE, Metric.GPU_USAGE, Metric.PING, Metric.VRAM)
             AdaptiveGrid(tiles, columns = tileCols) { metric, m ->
-                MetricTile(metric, snapshot, onGrantPermission, m, accent = if (metric.ordinal % 2 == 0) Charcoal.NeonBlue else Charcoal.NeonPurple)
+                if (metric == null) {
+                    ThermalStatusTile(snapshot, onGrantPermission, m)
+                } else {
+                    MetricTile(
+                        metric, snapshot, onGrantPermission, m,
+                        accent = if (metric.ordinal % 2 == 0) Charcoal.NeonBlue else Charcoal.NeonPurple,
+                        caption = MetricFormat.sourceCaption(metric, snapshot),
+                    )
+                }
             }
 
             SectionHeader("Before / after", subtitle = "Real snapshots captured when a boost started and when it was restored")
@@ -254,28 +262,52 @@ private fun TemperatureGraph(
 ) {
     val cpu = MetricFormat.display(Metric.CPU_TEMP, snapshot)
     val gpu = MetricFormat.display(Metric.GPU_TEMP, snapshot)
+    val batt = MetricFormat.display(Metric.BATTERY_TEMP, snapshot)
     val parts = listOfNotNull(
         (cpu as? MetricDisplay.Value)?.let { "CPU ${it.text}" },
         (gpu as? MetricDisplay.Value)?.let { "GPU ${it.text}" },
+        (batt as? MetricDisplay.Value)?.let { "Battery ${it.text}" },
     )
-    val current = MetricFormat.combine(listOf(cpu, gpu), parts.takeIf { it.isNotEmpty() }?.joinToString("  ·  "))
+    val current = MetricFormat.combine(listOf(cpu, gpu, batt), parts.takeIf { it.isNotEmpty() }?.joinToString("  ·  "))
     val cpuSeries = history.series(Metric.CPU_TEMP)
     val gpuSeries = history.series(Metric.GPU_TEMP)
+    val battSeries = history.series(Metric.BATTERY_TEMP)
     val series = buildList {
         if (cpu !is MetricDisplay.Unsupported) add(GraphSeries(cpuSeries, Charcoal.NeonBlue, "CPU"))
         if (gpu !is MetricDisplay.Unsupported) add(GraphSeries(gpuSeries, Charcoal.NeonPurple, "GPU"))
+        if (batt !is MetricDisplay.Unsupported) add(GraphSeries(battSeries, Charcoal.NeonCyan, "Battery (not CPU)"))
     }
     GraphPanel(
         title = "Temperature history",
         current = current,
         series = series,
-        range = GraphMath.range(cpuSeries + gpuSeries, minSpan = 6f, step = 2f),
+        range = GraphMath.range(cpuSeries + gpuSeries + battSeries, minSpan = 6f, step = 2f),
         capacity = history.capacity,
         onGrant = onGrant,
         modifier = modifier,
-        unsupportedReason = "No readable CPU/GPU thermal zone. Android's thermal status is a level, not °C, so it is not converted.",
+        unsupportedReason = "No readable CPU/GPU thermal zone or battery sensor. Android's thermal status is a level, not °C, so it is shown separately.",
         rangeLabel = { r -> "${r.min.toInt()}–${r.max.toInt()} °C" },
     )
+}
+
+@Composable
+private fun ThermalStatusTile(snapshot: MetricsSnapshot, onGrant: (PermissionKind) -> Unit, modifier: Modifier) {
+    val display = MetricFormat.thermalStatus(snapshot)
+    GlassPanel(modifier, accent = Charcoal.NeonCyan) {
+        Column(Modifier.fillMaxWidth().padding(16.dp)) {
+            Text("THERMAL STATUS", style = BoosterTypography.labelSmall, color = Charcoal.TextMuted)
+            Spacer(Modifier.height(8.dp))
+            MetricValue(display, onGrant)
+            Spacer(Modifier.height(4.dp))
+            Text(
+                if (display is MetricDisplay.Unsupported) "PowerManager thermal status is unavailable."
+                else MetricFormat.headroom(snapshot) ?: "Android's throttling level, not a temperature.",
+                style = BoosterTypography.bodyMedium,
+                color = Charcoal.TextDim,
+                maxLines = 2,
+            )
+        }
+    }
 }
 
 @Composable
@@ -301,6 +333,7 @@ private fun SingleGraph(
         modifier = modifier,
         accent = accent,
         unsupportedReason = MetricFormat.unsupportedReason(metric),
+        caption = MetricFormat.sourceCaption(metric, snapshot),
     )
 }
 
@@ -340,7 +373,7 @@ private fun SessionCard(record: SessionRecord, gameName: String, modifier: Modif
         Column(Modifier.fillMaxWidth().padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(gameName, style = BoosterTypography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                "$started" + (length?.let { " · $it" } ?: "") + " · closed ${record.closedPackages.size} app(s)",
+                "$started" + (length?.let { " · $it" } ?: "") + (if (record.closeSupported) " · closed ${record.closedPackages.size} app(s)" else ""),
                 style = BoosterTypography.bodyMedium,
                 color = Charcoal.TextDim,
             )
@@ -348,13 +381,17 @@ private fun SessionCard(record: SessionRecord, gameName: String, modifier: Modif
             Row {
                 Text("", Modifier.weight(1.1f))
                 Text("START", style = BoosterTypography.labelSmall, modifier = Modifier.weight(1f))
-                Text("RESTORE", style = BoosterTypography.labelSmall, modifier = Modifier.weight(1f))
+                Text(SessionCompare.afterLabel(record), style = BoosterTypography.labelSmall, modifier = Modifier.weight(1f))
                 Text("CHANGE", style = BoosterTypography.labelSmall, modifier = Modifier.weight(0.8f))
             }
             if (rows.isEmpty()) {
                 Text("No comparable metrics were captured.", style = BoosterTypography.bodyMedium)
             }
             rows.forEach { ComparisonLine(it) }
+            if (record.notes.isNotEmpty()) {
+                Spacer(Modifier.height(4.dp))
+                record.notes.take(3).forEach { Text("• $it", style = BoosterTypography.bodyMedium, color = Charcoal.TextDim) }
+            }
         }
     }
 }

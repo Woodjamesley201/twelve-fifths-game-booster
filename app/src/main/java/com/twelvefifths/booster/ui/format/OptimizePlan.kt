@@ -18,11 +18,21 @@ object OptimizePlan {
         closablePackages: Set<String>,
         dndGranted: Boolean,
         labelOf: (String) -> String = { it },
+        canKillOtherApps: Boolean = true,
+        usageGranted: Boolean = true,
     ): List<Step> = buildList {
         add(Step(Kind.DO, "Capture a before snapshot", "Real metrics only, for the before/after comparison."))
         val toClose = profile.closeBackgroundPackages
             .filter { it != profile.gamePackage && it in closablePackages }
-        if (toClose.isEmpty()) {
+        if (!canKillOtherApps) {
+            add(
+                Step(
+                    Kind.SKIP,
+                    "Closing other apps isn't available on this Android version",
+                    "Android 14+ ignores it. Use App info → Force stop for any app you want gone.",
+                ),
+            )
+        } else if (toClose.isEmpty()) {
             add(Step(Kind.SKIP, "Close no background apps", "Tick apps in the profile to close them."))
         } else {
             add(
@@ -45,6 +55,19 @@ object OptimizePlan {
         }
         if (profile.suggestGameModeSettings) {
             add(Step(Kind.DO, "Open a game-related Settings screen", "There is no shared Android game-mode switch."))
+        }
+        if (profile.launchGameOnStart) {
+            val openedSettings = profile.suggestBatterySaverSettings || profile.suggestGameModeSettings
+            add(
+                if (openedSettings) Step(Kind.SKIP, "Don't auto-launch the game", "A Settings screen opens instead; launch it when you're done.")
+                else Step(Kind.DO, "Launch the game"),
+            )
+        }
+        if (profile.autoEndWhenGameLeaves) {
+            add(
+                if (usageGranted) Step(Kind.DO, "Restore automatically after you leave the game", "About 8 s after it leaves the screen.")
+                else Step(Kind.SKIP, "Can't auto-restore", "Usage access is not granted; tap Restore yourself."),
+            )
         }
         add(Step(Kind.NEVER, "Never touches system apps or hidden OS settings", "And it cannot raise a game's FPS directly."))
     }

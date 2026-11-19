@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import com.twelvefifths.booster.ui.theme.GlassPanel
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
@@ -33,9 +35,30 @@ fun ProfileEditor(
     dndGranted: Boolean,
     onGrantPermission: (PermissionKind) -> Unit,
     modifier: Modifier = Modifier,
+    usageGranted: Boolean = true,
+    canKillOtherApps: Boolean = true,
+    onOpenAppInfo: (String) -> Unit = {},
     maxAppRows: Int = Int.MAX_VALUE,
 ) {
     Column(modifier.fillMaxWidth()) {
+        ToggleRow(
+            title = "Launch the game when Optimize starts",
+            subtitle = "Skipped if a Settings screen is opened as part of the boost.",
+            checked = profile.launchGameOnStart,
+            onCheckedChange = { onChange(profile.copy(launchGameOnStart = it)) },
+        )
+        ToggleRow(
+            title = "Restore automatically when I leave the game",
+            subtitle = if (usageGranted) "Ends the session about 8 s after the game leaves the screen."
+            else "Needs usage access to see which app is in front.",
+            checked = profile.autoEndWhenGameLeaves,
+            onCheckedChange = { onChange(profile.copy(autoEndWhenGameLeaves = it)) },
+            trailingExtra = if (!usageGranted && profile.autoEndWhenGameLeaves) {
+                { PillButton("Grant permission", { onGrantPermission(PermissionKind.USAGE_ACCESS) }) }
+            } else {
+                null
+            },
+        )
         ToggleRow(
             title = "Do Not Disturb during the session",
             subtitle = if (dndGranted) "Turned on at start, restored when you tap Restore."
@@ -65,7 +88,7 @@ fun ProfileEditor(
         val candidates = closableApps.filter { it.first != profile.gamePackage }
         Row(verticalAlignment = Alignment.CenterVertically) {
             Column(Modifier.weight(1f)) {
-                Text("Close these background apps", style = BoosterTypography.titleMedium)
+                Text(if (canKillOtherApps) "Close these background apps" else "Background apps to close", style = BoosterTypography.titleMedium)
                 Text(
                     "Only apps you tick. System apps are never listed. Android may restart some of them.",
                     style = BoosterTypography.bodyMedium,
@@ -75,6 +98,18 @@ fun ProfileEditor(
             Text("${profile.closeBackgroundPackages.count { p -> candidates.any { it.first == p } }} selected", style = BoosterTypography.labelLarge, color = Charcoal.NeonBlue)
         }
         Spacer(Modifier.height(6.dp))
+        if (!canKillOtherApps) {
+            GlassPanel(accent = Charcoal.Warn) {
+                Text(
+                    "Closing other apps isn't available on Android 14 and newer: the system ignores the request. " +
+                        "Your picks are kept, and each app has an App info button so you can Force stop it yourself.",
+                    style = BoosterTypography.bodyMedium,
+                    color = Charcoal.Text,
+                    modifier = Modifier.padding(12.dp),
+                )
+            }
+            Spacer(Modifier.height(6.dp))
+        }
         if (candidates.isEmpty()) {
             Text("No closable apps found.", style = BoosterTypography.bodyMedium)
         }
@@ -90,6 +125,11 @@ fun ProfileEditor(
                         onChange(profile.copy(closeBackgroundPackages = next))
                     },
                     leading = { AppIcon(pkg, label, size = 28.dp) },
+                    trailing = if (!canKillOtherApps) {
+                        { PillButton("App info", { onOpenAppInfo(pkg) }, accent = Charcoal.NeonBlue) }
+                    } else {
+                        null
+                    },
                 )
             }
         }

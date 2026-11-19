@@ -59,6 +59,29 @@ class MetricFormatTest {
     }
 
     @Test
+    fun pingFailureIsAStatusNotANumber() {
+        val s = MetricsSnapshot.empty().copy(
+            pingSupport = MetricSupport.SUPPORTED,
+            pingMs = null,
+            pingStatus = com.twelvefifths.booster.metrics.PingStatus.TIMEOUT,
+            pingTarget = "1.1.1.1:443",
+        )
+        assertEquals(MetricDisplay.Status("Timed out"), MetricFormat.display(Metric.PING, s))
+        assertTrue(MetricFormat.sourceCaption(Metric.PING, s)!!.contains("TCP connect to 1.1.1.1:443"))
+    }
+
+    @Test
+    fun thermalStatusIsALevelNotDegrees() {
+        val s = MetricsSnapshot.empty().copy(
+            thermalStatus = com.twelvefifths.booster.metrics.ThermalStatusLevel.MODERATE,
+            thermalStatusSupport = MetricSupport.SUPPORTED,
+        )
+        assertEquals(MetricDisplay.Value("Moderate"), MetricFormat.thermalStatus(s))
+        assertEquals(MetricDisplay.Unsupported, MetricFormat.thermalStatus(MetricsSnapshot.empty()))
+        assertEquals(MetricDisplay.Unsupported, MetricFormat.display(Metric.CPU_TEMP, s))
+    }
+
+    @Test
     fun bytesAndDurations() {
         assertEquals("512 MB", MetricFormat.bytes(512L * 1024 * 1024))
         assertEquals("1.5 GB", MetricFormat.bytes(1536L * 1024 * 1024))

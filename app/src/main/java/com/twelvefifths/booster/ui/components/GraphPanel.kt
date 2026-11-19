@@ -45,12 +45,16 @@ fun GraphPanel(
     unsupportedReason: String? = null,
     rangeLabel: ((GraphRange) -> String)? = null,
     graphHeight: Dp = 110.dp,
+    caption: String? = null,
 ) {
     GlassPanel(modifier = modifier, accent = accent) {
         Column(Modifier.fillMaxWidth().padding(16.dp)) {
             Text(title.uppercase(), style = BoosterTypography.labelSmall, color = Charcoal.TextMuted)
             Spacer(Modifier.height(6.dp))
             MetricValue(current, onGrant)
+            if (caption != null && current !is MetricDisplay.Unsupported) {
+                Text(caption, style = BoosterTypography.bodyMedium, color = Charcoal.TextDim, maxLines = 1)
+            }
             when (current) {
                 MetricDisplay.Unsupported -> {
                     if (unsupportedReason != null) {

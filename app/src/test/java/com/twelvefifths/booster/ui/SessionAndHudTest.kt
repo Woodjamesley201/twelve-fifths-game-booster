@@ -9,7 +9,10 @@ import com.twelvefifths.booster.ui.format.Metric
 import com.twelvefifths.booster.ui.format.MetricFormat
 import com.twelvefifths.booster.ui.format.OptimizePlan
 import com.twelvefifths.booster.ui.format.SessionCompare
-import com.twelvefifths.booster.ui.hud.HudRows
+import com.twelvefifths.booster.hud.HudRows
+import com.twelvefifths.booster.hud.HudStartResult
+import com.twelvefifths.booster.ui.format.HudStartText
+import com.twelvefifths.booster.ui.hud.HudPrefsEdit
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -56,34 +59,77 @@ class SessionAndHudTest {
     }
 
     @Test
-    fun compactHudCapsRowsAndUsesHonestLabels() {
-        val prefs = HudPreferences(compact = true)
-        val rows = HudRows.rows(MetricsSnapshot.empty(), prefs)
-        assertEquals(HudRows.COMPACT_MAX_ROWS, rows.size)
-        assertTrue(rows.all { it.text == MetricFormat.UNSUPPORTED_LABEL })
-        val expanded = HudRows.rows(MetricsSnapshot.empty(), prefs.copy(compact = false))
-        assertEquals(8, expanded.size)
-        assertEquals("PING TCP", expanded.single { it.metric == Metric.PING }.label)
+    fun previewUsesEngineRowsWithHonestLabels() {
+        val prefs = HudPreferences(compact = false)
+        val rows = HudRows.build(MetricsSnapshot.empty(), prefs)
+        assertEquals(8, rows.size)
+        assertTrue(rows.all { HudPrefsEdit.previewValue(it) == MetricFormat.UNSUPPORTED_LABEL })
+        val ping = rows.single { it.key == com.twelvefifths.booster.hud.HudRow.Key.PING }
+        assertEquals("PING TCP", HudPrefsEdit.previewLabel(ping))
+        // Compact keeps only live values, so an all-unsupported snapshot shows nothing.
+        assertTrue(HudRows.build(MetricsSnapshot.empty(), prefs.copy(compact = true)).isEmpty())
+    }
+
+    @Test
+    fun previewPingValueIsLabelledTcp() {
+        val s = MetricsSnapshot.empty().copy(pingMs = 31, pingSupport = MetricSupport.SUPPORTED)
+        val ping = HudRows.build(s, HudPreferences(compact = true)).single()
+        assertEquals("31 ms TCP", HudPrefsEdit.previewValue(ping))
     }
 
     @Test
     fun toggleStatRoundTrips() {
         var p = HudPreferences()
-        for (m in Metric.entries) {
-            p = HudRows.withShown(p, m, false)
-            assertFalse(HudRows.isShown(p, m))
+        for (m in Metric.hud) {
+            p = HudPrefsEdit.withShown(p, m, false)
+            assertFalse(HudPrefsEdit.isShown(p, m))
         }
-        assertTrue(HudRows.enabled(p).isEmpty())
+        assertTrue(HudPrefsEdit.enabled(p).isEmpty())
     }
 
     @Test
     fun cornerPresetsStayOnScreen() {
-        val (x, y) = HudRows.cornerPosition(HudRows.Corner.BOTTOM_END, 1340, 800, 300, 200, 20)
+        val (x, y) = HudPrefsEdit.cornerPosition(HudPrefsEdit.Corner.BOTTOM_END, 1340, 800, 300, 200, 20)
         assertEquals(1020, x)
         assertEquals(580, y)
-        val (x2, y2) = HudRows.cornerPosition(HudRows.Corner.TOP_END, 200, 100, 300, 200, 20)
+        val (x2, y2) = HudPrefsEdit.cornerPosition(HudPrefsEdit.Corner.TOP_END, 200, 100, 300, 200, 20)
         assertEquals(0, x2)
         assertEquals(20, y2)
+    }
+
+    @Test
+    fun hudStartResultsHaveMessages() {
+        assertNull(HudStartText.message(HudStartResult.STARTED))
+        assertNull(HudStartText.message(null))
+        assertTrue(HudStartText.message(HudStartResult.NEEDS_OVERLAY_PERMISSION)!!.contains("Display over other apps"))
+        assertTrue(HudStartText.message(HudStartResult.NOT_ALLOWED_FROM_BACKGROUND)!!.contains("background"))
+    }
+
+    @Test
+    fun planSaysClosingIsUnavailableOnAndroid14Plus() {
+        val profile = OptimizationProfile(gamePackage = "game", closeBackgroundPackages = setOf("a"))
+        val plan = OptimizePlan.build(profile, setOf("a"), dndGranted = true, canKillOtherApps = false)
+        assertTrue(plan.none { it.kind == OptimizePlan.Kind.DO && it.title.startsWith("Close") })
+        assertTrue(plan.any { it.kind == OptimizePlan.Kind.SKIP && it.title.contains("isn't available") })
+    }
+
+    @Test
+    fun launchOnStartIsSkippedWhenSettingsOpen() {
+        val profile = OptimizationProfile(gamePackage = "g", launchGameOnStart = true, suggestBatterySaverSettings = true, autoEndWhenGameLeaves = true)
+        val plan = OptimizePlan.build(profile, emptySet(), dndGranted = false, usageGranted = false)
+        assertTrue(plan.any { it.kind == OptimizePlan.Kind.SKIP && it.title.contains("auto-launch") })
+        assertTrue(plan.any { it.kind == OptimizePlan.Kind.SKIP && it.title.contains("auto-restore") })
+    }
+
+    @Test
+    fun comparisonPrefersAfterOptimizeSample() {
+        val record = SessionRecord(
+            "id", "game", 0L, 9_000L,
+            before = snap(3000, null), after = snap(3500, null), closedPackages = emptyList(),
+            afterOptimize = snap(2900, null),
+        )
+        assertEquals("−100 MB", SessionCompare.rows(record).single { it.metric == Metric.RAM }.delta)
+        assertEquals("AFTER BOOST", SessionCompare.afterLabel(record))
     }
 
     @Test

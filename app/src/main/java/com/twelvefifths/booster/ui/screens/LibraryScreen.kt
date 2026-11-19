@@ -86,6 +86,9 @@ fun LibraryScreen(
     onSaveProfile: (OptimizationProfile) -> Unit,
     onGrantPermission: (PermissionKind) -> Unit,
     modifier: Modifier = Modifier,
+    usageGranted: Boolean = true,
+    canKillOtherApps: Boolean = true,
+    onOpenAppInfo: (String) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var refreshing by remember { mutableStateOf(false) }
@@ -191,6 +194,9 @@ fun LibraryScreen(
             },
             onGrantPermission = onGrantPermission,
             onDismiss = { editing = null },
+            usageGranted = usageGranted,
+            canKillOtherApps = canKillOtherApps,
+            onOpenAppInfo = onOpenAppInfo,
         )
     }
 }
@@ -216,6 +222,7 @@ private fun GameCard(
                     Text(MetricFormat.lastPlayed(game.lastPlayedMs, nowMs), style = BoosterTypography.bodyMedium)
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         StatusPill(if (game.isManual) "Added by you" else "Detected", if (game.isManual) Charcoal.NeonPurple else Charcoal.NeonBlue)
+                        if (!game.isInstalled) StatusPill("Not installed", Charcoal.Warn)
                         if (isBoosted) StatusPill("Boosted", Charcoal.Ok)
                     }
                 }
@@ -226,8 +233,8 @@ private fun GameCard(
                 }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PrimaryButton("Launch", onLaunch, Modifier.weight(1f), icon = Icons.Outlined.PlayArrow)
-                SecondaryButton("Boost", onBoost, Modifier.weight(1f), enabled = boostEnabled, icon = Icons.Outlined.Bolt)
+                PrimaryButton("Launch", onLaunch, Modifier.weight(1f), enabled = game.isInstalled, icon = Icons.Outlined.PlayArrow)
+                SecondaryButton("Boost", onBoost, Modifier.weight(1f), enabled = boostEnabled && game.isInstalled, icon = Icons.Outlined.Bolt)
                 SecondaryButton("Profile", onEdit, Modifier.weight(1f), icon = Icons.Outlined.Tune)
             }
         }
@@ -300,6 +307,9 @@ private fun ProfileDialog(
     onSave: (OptimizationProfile) -> Unit,
     onGrantPermission: (PermissionKind) -> Unit,
     onDismiss: () -> Unit,
+    usageGranted: Boolean,
+    canKillOtherApps: Boolean,
+    onOpenAppInfo: (String) -> Unit,
 ) {
     var profile by remember(game.packageName) { mutableStateOf<OptimizationProfile?>(null) }
     LaunchedEffect(game.packageName) {
@@ -326,6 +336,9 @@ private fun ProfileDialog(
                     closableApps = closableApps,
                     dndGranted = dndGranted,
                     onGrantPermission = onGrantPermission,
+                    usageGranted = usageGranted,
+                    canKillOtherApps = canKillOtherApps,
+                    onOpenAppInfo = onOpenAppInfo,
                 )
                 Spacer(Modifier.height(4.dp))
             }

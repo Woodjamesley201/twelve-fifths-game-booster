@@ -23,8 +23,16 @@ object SessionCompare {
 
     private val compared = listOf(Metric.RAM, Metric.CPU_TEMP, Metric.GPU_TEMP, Metric.CPU_USAGE, Metric.PING, Metric.FPS)
 
+    private val compared2 get() = compared + Metric.BATTERY_TEMP
+
+    /**
+     * Before vs the sample taken ~1.5 s after the boost actions ([SessionRecord.afterOptimize]);
+     * falls back to the end-of-session sample for older records.
+     */
     fun rows(record: SessionRecord): List<ComparisonRow> =
-        compared.mapNotNull { row(it, record.before, record.after) }
+        compared2.mapNotNull { row(it, record.before, record.afterOptimize ?: record.after) }
+
+    fun afterLabel(record: SessionRecord): String = if (record.afterOptimize != null) "AFTER BOOST" else "AT RESTORE"
 
     /** Rows where at least one side has a support state worth showing. */
     fun row(metric: Metric, before: MetricsSnapshot?, after: MetricsSnapshot?): ComparisonRow? {
@@ -53,7 +61,7 @@ object SessionCompare {
                 val av = MetricFormat.numeric(metric, after) ?: return null to null
                 val d = av - bv
                 val unit = when (metric) {
-                    Metric.CPU_TEMP, Metric.GPU_TEMP -> " °C"
+                    Metric.CPU_TEMP, Metric.GPU_TEMP, Metric.BATTERY_TEMP -> " °C"
                     Metric.CPU_USAGE, Metric.GPU_USAGE -> " pts"
                     Metric.PING -> " ms"
                     Metric.FPS -> " fps"

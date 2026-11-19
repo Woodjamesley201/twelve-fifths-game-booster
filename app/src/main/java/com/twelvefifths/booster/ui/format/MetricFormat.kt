@@ -2,6 +2,7 @@ package com.twelvefifths.booster.ui.format
 
 import com.twelvefifths.booster.metrics.MetricSupport
 import com.twelvefifths.booster.metrics.MetricsSnapshot
+import com.twelvefifths.booster.metrics.PingStatus
 import java.util.Locale
 import kotlin.math.abs
 import kotlin.math.roundToLong
@@ -26,6 +27,13 @@ enum class Metric(val title: String, val shortLabel: String) {
     GPU_USAGE("GPU usage", "GPU %"),
     PING("Latency (TCP)", "PING TCP"),
     VRAM("GPU memory", "VRAM"),
+    BATTERY_TEMP("Battery temperature", "BATT °C"),
+    ;
+
+    companion object {
+        /** Metrics the HUD can toggle (HudPreferences has a flag for each). */
+        val hud: List<Metric> = listOf(FPS, CPU_TEMP, GPU_TEMP, RAM, CPU_USAGE, GPU_USAGE, PING, VRAM)
+    }
 }
 
 /** Android permission flows the UI can route to. */
@@ -41,6 +49,9 @@ sealed interface MetricDisplay {
     data class NeedsPermission(val permission: PermissionKind) : MetricDisplay
 
     data object Unsupported : MetricDisplay
+
+    /** Supported, but this sample has a non-numeric state (e.g. ping timeout). */
+    data class Status(val text: String) : MetricDisplay
 }
 
 object MetricFormat {
@@ -57,6 +68,7 @@ object MetricFormat {
         Metric.CPU_TEMP, Metric.GPU_TEMP -> "No readable thermal sensor on this device."
         Metric.RAM -> "Memory info is unavailable."
         Metric.PING -> "TCP latency check could not run."
+        Metric.BATTERY_TEMP -> "Battery temperature is not reported."
     }
 
     /**
@@ -68,10 +80,14 @@ object MetricFormat {
         else -> PermissionKind.USAGE_ACCESS
     }
 
-    fun display(metric: Metric, value: String?, support: MetricSupport): MetricDisplay = when (support) {
+    fun display(metric: Metric, value: String?, support: MetricSupport, status: String? = null): MetricDisplay = when (support) {
         MetricSupport.UNSUPPORTED -> MetricDisplay.Unsupported
         MetricSupport.NEEDS_PERMISSION -> MetricDisplay.NeedsPermission(permissionFor(metric))
-        MetricSupport.SUPPORTED -> if (value == null) MetricDisplay.Waiting else MetricDisplay.Value(value)
+        MetricSupport.SUPPORTED -> when {
+            value != null -> MetricDisplay.Value(value)
+            status != null -> MetricDisplay.Status(status)
+            else -> MetricDisplay.Waiting
+        }
     }
 
     /** Plain text for compact surfaces (HUD rows, comparisons). */
@@ -80,6 +96,7 @@ object MetricFormat {
         MetricDisplay.Waiting -> WAITING_LABEL
         is MetricDisplay.NeedsPermission -> GRANT_LABEL
         MetricDisplay.Unsupported -> UNSUPPORTED_LABEL
+        is MetricDisplay.Status -> display.text
     }
 
     /**
@@ -89,7 +106,7 @@ object MetricFormat {
      */
     fun combine(displays: List<MetricDisplay>, joined: String?): MetricDisplay = when {
         joined != null -> MetricDisplay.Value(joined)
-        displays.any { it is MetricDisplay.Waiting || it is MetricDisplay.Value } -> MetricDisplay.Waiting
+        displays.any { it is MetricDisplay.Waiting || it is MetricDisplay.Value || it is MetricDisplay.Status } -> MetricDisplay.Waiting
         displays.any { it is MetricDisplay.NeedsPermission } -> displays.first { it is MetricDisplay.NeedsPermission }
         else -> MetricDisplay.Unsupported
     }
@@ -103,6 +120,7 @@ object MetricFormat {
         Metric.GPU_USAGE -> s.gpuUsageSupport
         Metric.PING -> s.pingSupport
         Metric.VRAM -> s.vramSupport
+        Metric.BATTERY_TEMP -> s.batteryTempSupport
     }
 
     /** Raw numeric value, only when SUPPORTED. RAM is percent used. */
@@ -117,6 +135,7 @@ object MetricFormat {
             Metric.GPU_USAGE -> s.gpuUsage
             Metric.PING -> s.pingMs?.toFloat()
             Metric.VRAM -> s.vramUsedBytes?.toFloat()
+            Metric.BATTERY_TEMP -> s.batteryTempC
         }?.takeIf { it.isFinite() }
     }
 
@@ -131,11 +150,56 @@ object MetricFormat {
             Metric.GPU_USAGE -> s.gpuUsage?.let(::percent)
             Metric.PING -> s.pingMs?.let(::pingTcp)
             Metric.VRAM -> s.vramUsedBytes?.let(::bytes)
+            Metric.BATTERY_TEMP -> s.batteryTempC?.let(::celsius)
         }
     }
 
     fun display(metric: Metric, s: MetricsSnapshot): MetricDisplay =
-        display(metric, valueText(metric, s), support(metric, s))
+        display(metric, valueText(metric, s), support(metric, s), statusText(metric, s))
+
+    /** Non-numeric state for a SUPPORTED metric with no value (ping only today). */
+    fun statusText(metric: Metric, s: MetricsSnapshot): String? = when (metric) {
+        Metric.PING -> pingStatus(s.pingStatus)
+        else -> null
+    }
+
+    fun pingStatus(status: PingStatus): String? = when (status) {
+        PingStatus.OK, PingStatus.NOT_MEASURED -> null
+        PingStatus.TIMEOUT -> "Timed out"
+        PingStatus.UNREACHABLE -> "Unreachable"
+        PingStatus.UNKNOWN_HOST -> "Unknown host"
+        PingStatus.NO_NETWORK -> "No network"
+        PingStatus.INVALID_TARGET -> "Invalid target"
+    }
+
+    /**
+     * Where a value comes from, shown as a caption so the source is never
+     * ambiguous (e.g. which thermal zone, which TCP target).
+     */
+    fun sourceCaption(metric: Metric, s: MetricsSnapshot): String? = when (metric) {
+        Metric.CPU_TEMP -> s.cpuTempSource?.takeIf { s.cpuTempSupport == MetricSupport.SUPPORTED }?.let { "Source: $it" }
+        Metric.GPU_TEMP -> s.gpuTempSource?.takeIf { s.gpuTempSupport == MetricSupport.SUPPORTED }?.let { "Source: $it" }
+        Metric.BATTERY_TEMP -> "Battery pack sensor, not CPU or GPU"
+        Metric.PING -> "${MetricsSnapshot.PING_METHOD} to ${s.pingTarget ?: "default target"} (not ICMP)"
+        Metric.RAM -> s.ramAvailableBytes?.let { "${bytes(it)} available" + if (s.lowMemory == true) " · low memory" else "" }
+        else -> null
+    }
+
+    /** Thermal status is a throttling level, never degrees. */
+    fun thermalStatus(s: MetricsSnapshot): MetricDisplay {
+        if (s.thermalStatusSupport != MetricSupport.SUPPORTED) {
+            return display(Metric.CPU_TEMP, null, s.thermalStatusSupport)
+        }
+        val level = s.thermalStatus ?: return MetricDisplay.Waiting
+        return MetricDisplay.Value(level.name.lowercase(Locale.US).replaceFirstChar { it.uppercase(Locale.US) })
+    }
+
+    /** Headroom ratio as text: 1.0 = throttling now. Not a temperature. */
+    fun headroom(s: MetricsSnapshot): String? {
+        if (s.thermalHeadroomSupport != MetricSupport.SUPPORTED) return null
+        val h = s.thermalHeadroom?.takeIf { it.isFinite() } ?: return null
+        return String.format(Locale.US, "Headroom %.2f (1.00 = throttling)", h)
+    }
 
     fun fps(v: Float): String = String.format(Locale.US, "%.0f", v)
 
